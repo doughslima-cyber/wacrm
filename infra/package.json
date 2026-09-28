@@ -8,7 +8,8 @@
   },
   "scripts": {
     "db:migrate": "node db/migrate.mjs",
-    "db:verify": "node db/migrate.mjs --verify-only"
+    "db:verify": "node db/migrate.mjs --verify-only",
+    "auth:dev-user": "node auth/dev-user.mjs"
   },
   "dependencies": {
     "@google-cloud/cloud-sql-connector": "^1.8.0",

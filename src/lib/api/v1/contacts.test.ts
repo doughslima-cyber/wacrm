@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { SupabaseClient } from '@supabase/supabase-js';
+import type { SupabaseClient } from '@/lib/supabase/app-client';
 
 // Mock the two collaborators `setContactTags` writes through so the
 // tests can assert exactly which joins it adds and removes.
