@@ -10,7 +10,14 @@ import { SESSION_COOKIE, verifySessionCookie } from '@/lib/auth/session'
 // refreshed in flight, so unlike the Supabase version there are no
 // rotated cookies to carry onto redirects (issue #288 can't recur).
 export async function proxy(request: NextRequest) {
-  const user = await verifySessionCookie(request.cookies.get(SESSION_COOKIE)?.value)
+  // Verification throws only when the revocation check can't reach
+  // Firebase and has nothing cached; treat that as signed out.
+  const user = await verifySessionCookie(request.cookies.get(SESSION_COOKIE)?.value).catch(
+    (err) => {
+      console.error('[proxy] session check failed:', err)
+      return null
+    },
+  )
 
   // Auth pages - redirect to dashboard if already logged in.
   // Exception: when an invite token is in the query string we
