@@ -1930,6 +1930,43 @@
     "sending": "전송 중...",
     "sendLink": "재설정 링크 보내기"
   },
+  "AuthErrors": {
+    "invalid_credentials": "이메일 또는 비밀번호가 올바르지 않습니다.",
+    "email_not_verified": "로그인하기 전에 이메일을 인증하세요. 새 링크를 보냈습니다.",
+    "email_in_use": "이 이메일로 가입된 계정이 이미 있습니다.",
+    "weak_password": "비밀번호는 6자 이상이어야 합니다.",
+    "invalid_email": "올바른 이메일 주소를 입력하세요.",
+    "too_many_requests": "시도 횟수가 너무 많습니다. 몇 분 후에 다시 시도하세요.",
+    "requires_recent_login": "보안을 위해 로그아웃한 뒤 다시 로그인하고 변경하세요.",
+    "network": "네트워크 오류입니다. 연결을 확인하고 다시 시도하세요.",
+    "session_failed": "세션을 시작할 수 없습니다. 다시 시도하세요.",
+    "unknown": "문제가 발생했습니다. 다시 시도하세요."
+  },
+  "AuthActionPage": {
+    "invalidTitle": "더 이상 유효하지 않은 링크입니다",
+    "invalidDesc": "만료되었거나 이미 사용된 링크입니다. 새 링크를 요청하세요.",
+    "requestNewLink": "새 링크 요청",
+    "backToSignIn": "로그인으로 돌아가기",
+    "resetTitle": "새 비밀번호 설정",
+    "resetDesc": "<strong>{email}</strong> 계정",
+    "newPasswordLabel": "새 비밀번호",
+    "confirmPasswordLabel": "새 비밀번호 확인",
+    "passwordTooShort": "비밀번호는 {min}자 이상이어야 합니다",
+    "passwordsMismatch": "비밀번호가 일치하지 않습니다",
+    "saving": "저장 중...",
+    "savePassword": "비밀번호 저장",
+    "verifiedTitle": "이메일 인증 완료",
+    "verifiedDesc": "이메일이 인증되었습니다. 이제 로그인할 수 있습니다.",
+    "passwordChangedTitle": "비밀번호 변경 완료",
+    "passwordChangedDesc": "새 비밀번호로 로그인하세요.",
+    "emailChangedTitle": "이메일 변경 완료",
+    "emailChangedDesc": "새 이메일 주소로 다시 로그인하세요.",
+    "emailRecoveredTitle": "이메일 복원 완료",
+    "emailRecoveredDesc": "로그인 이메일이 다시 {email}(으)로 설정되었습니다. 변경을 요청하지 않았다면 비밀번호도 재설정하세요.",
+    "sendReset": "비밀번호 재설정 링크 보내기",
+    "resetSent": "재설정 링크를 보냈습니다",
+    "continue": "계속"
+  },
   "JoinPage": {
     "fail": {
       "notFoundTitle": "초대를 찾을 수 없습니다",

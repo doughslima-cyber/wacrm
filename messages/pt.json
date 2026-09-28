@@ -1918,6 +1918,43 @@
     "sending": "Enviando...",
     "sendLink": "Enviar link de redefinição"
   },
+  "AuthErrors": {
+    "invalid_credentials": "E-mail ou senha inválidos.",
+    "email_not_verified": "Confirme seu e-mail antes de entrar. Enviamos um novo link.",
+    "email_in_use": "Já existe uma conta com este e-mail.",
+    "weak_password": "A senha deve ter pelo menos 6 caracteres.",
+    "invalid_email": "Informe um e-mail válido.",
+    "too_many_requests": "Muitas tentativas. Tente de novo em alguns minutos.",
+    "requires_recent_login": "Por segurança, saia e entre de novo para fazer esta alteração.",
+    "network": "Erro de rede. Verifique sua conexão e tente de novo.",
+    "session_failed": "Não foi possível iniciar sua sessão. Tente de novo.",
+    "unknown": "Algo deu errado. Tente de novo."
+  },
+  "AuthActionPage": {
+    "invalidTitle": "Este link não é mais válido",
+    "invalidDesc": "Ele expirou ou já foi usado. Peça um novo.",
+    "requestNewLink": "Pedir um novo link",
+    "backToSignIn": "Voltar ao login",
+    "resetTitle": "Escolha uma nova senha",
+    "resetDesc": "Para <strong>{email}</strong>",
+    "newPasswordLabel": "Nova senha",
+    "confirmPasswordLabel": "Confirme a nova senha",
+    "passwordTooShort": "A senha deve ter pelo menos {min} caracteres",
+    "passwordsMismatch": "As senhas não coincidem",
+    "saving": "Salvando...",
+    "savePassword": "Salvar senha",
+    "verifiedTitle": "E-mail confirmado",
+    "verifiedDesc": "Seu e-mail foi confirmado. Você já pode entrar.",
+    "passwordChangedTitle": "Senha alterada",
+    "passwordChangedDesc": "Entre com a sua nova senha.",
+    "emailChangedTitle": "E-mail alterado",
+    "emailChangedDesc": "Entre de novo com o novo endereço de e-mail.",
+    "emailRecoveredTitle": "E-mail restaurado",
+    "emailRecoveredDesc": "Seu e-mail de acesso voltou a ser {email}. Se você não pediu a alteração, redefina também a sua senha.",
+    "sendReset": "Enviar link para redefinir a senha",
+    "resetSent": "Link enviado",
+    "continue": "Continuar"
+  },
   "JoinPage": {
     "fail": {
       "notFoundTitle": "Convite não encontrado",

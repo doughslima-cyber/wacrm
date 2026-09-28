@@ -20,6 +20,7 @@
 import { NextResponse } from "next/server";
 import type { PostgrestError } from "@/lib/supabase/app-client";
 
+import { syncAccountClaimsForUser } from "@/lib/auth/claims";
 import { hashInviteToken } from "@/lib/auth/invitations";
 import {
   checkRateLimit,
@@ -87,5 +88,14 @@ export async function POST(
 
   if (error) return rpcErrorToResponse(error);
 
-  return NextResponse.json({ ok: true, accountId });
+  // The user moved accounts: Storage / Firestore rules read the
+  // account from the Firebase custom claims. The join is already
+  // committed, so a failure here is logged, not surfaced — the next
+  // sign-in writes the claim again.
+  const claimsChanged = await syncAccountClaimsForUser(user.id).catch((err) => {
+    console.error("[redeem] claim sync failed:", err);
+    return false;
+  });
+
+  return NextResponse.json({ ok: true, accountId, claimsChanged });
 }

@@ -18,6 +18,7 @@ import { NextResponse } from "next/server";
 import type { PostgrestError } from "@/lib/supabase/app-client";
 
 import { requireRole, toErrorResponse } from "@/lib/auth/account";
+import { syncAccountClaimsForUser } from "@/lib/auth/claims";
 import { isAccountRole } from "@/lib/auth/roles";
 import {
   checkRateLimit,
@@ -114,6 +115,13 @@ export async function DELETE(
     });
 
     if (error) return rpcErrorToResponse(error);
+
+    // The removed member now lives in a fresh personal account; drop
+    // this account from their Firebase claims (Storage / Firestore
+    // rules). Their browser sees it at its next token refresh (≤ 1h).
+    await syncAccountClaimsForUser(userId).catch((err) => {
+      console.error("[members route] claim sync failed:", err);
+    });
 
     return NextResponse.json({ ok: true, newPersonalAccountId: data });
   } catch (err) {

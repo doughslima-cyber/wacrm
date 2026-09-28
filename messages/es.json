@@ -1918,6 +1918,43 @@
     "sending": "Enviando...",
     "sendLink": "Enviar enlace de restablecimiento"
   },
+  "AuthErrors": {
+    "invalid_credentials": "Correo o contraseña incorrectos.",
+    "email_not_verified": "Confirma tu correo antes de iniciar sesión. Te enviamos un nuevo enlace.",
+    "email_in_use": "Ya existe una cuenta con este correo.",
+    "weak_password": "La contraseña debe tener al menos 6 caracteres.",
+    "invalid_email": "Ingresa un correo válido.",
+    "too_many_requests": "Demasiados intentos. Inténtalo de nuevo en unos minutos.",
+    "requires_recent_login": "Por seguridad, cierra sesión y vuelve a iniciarla para hacer este cambio.",
+    "network": "Error de red. Revisa tu conexión e inténtalo de nuevo.",
+    "session_failed": "No se pudo iniciar tu sesión. Inténtalo de nuevo.",
+    "unknown": "Algo salió mal. Inténtalo de nuevo."
+  },
+  "AuthActionPage": {
+    "invalidTitle": "Este enlace ya no es válido",
+    "invalidDesc": "Expiró o ya se usó. Solicita uno nuevo.",
+    "requestNewLink": "Solicitar un nuevo enlace",
+    "backToSignIn": "Volver a iniciar sesión",
+    "resetTitle": "Elige una nueva contraseña",
+    "resetDesc": "Para <strong>{email}</strong>",
+    "newPasswordLabel": "Nueva contraseña",
+    "confirmPasswordLabel": "Confirma la nueva contraseña",
+    "passwordTooShort": "La contraseña debe tener al menos {min} caracteres",
+    "passwordsMismatch": "Las contraseñas no coinciden",
+    "saving": "Guardando...",
+    "savePassword": "Guardar contraseña",
+    "verifiedTitle": "Correo confirmado",
+    "verifiedDesc": "Tu correo está confirmado. Ya puedes iniciar sesión.",
+    "passwordChangedTitle": "Contraseña cambiada",
+    "passwordChangedDesc": "Inicia sesión con tu nueva contraseña.",
+    "emailChangedTitle": "Correo cambiado",
+    "emailChangedDesc": "Vuelve a iniciar sesión con tu nuevo correo.",
+    "emailRecoveredTitle": "Correo restaurado",
+    "emailRecoveredDesc": "Tu correo de acceso vuelve a ser {email}. Si no pediste el cambio, restablece también tu contraseña.",
+    "sendReset": "Enviar enlace para restablecer la contraseña",
+    "resetSent": "Enlace enviado",
+    "continue": "Continuar"
+  },
   "JoinPage": {
     "fail": {
       "notFoundTitle": "Invitación no encontrada",

@@ -18,6 +18,7 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 
+import { isSameOrigin } from "@/lib/auth/same-origin";
 import { getSessionUser, SESSION_COOKIE } from "@/lib/auth/session";
 import { postgrestUrl, signedPostgrestFetch } from "@/lib/supabase/postgrest";
 
@@ -50,24 +51,6 @@ function isAllowedPath(path: string[]): boolean {
   if (path.some((segment) => segment === "" || segment === "." || segment === "..")) return false;
   if (path.length === 1) return path[0] !== "rpc";
   return path.length === 2 && path[0] === "rpc";
-}
-
-/**
- * Cookie auth invites CSRF on writes. SameSite=Lax already blocks the
- * cross-site cases browsers can build; this also refuses any request a
- * browser labels as cross-site, or whose Origin isn't this host.
- */
-function isSameOrigin(request: NextRequest): boolean {
-  const site = request.headers.get("sec-fetch-site");
-  if (site && site !== "same-origin" && site !== "none") return false;
-  const origin = request.headers.get("origin");
-  if (!origin) return true;
-  const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
-  try {
-    return new URL(origin).host === host;
-  } catch {
-    return false;
-  }
 }
 
 async function handle(request: NextRequest, { params }: RouteContext) {

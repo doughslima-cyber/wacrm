@@ -2,7 +2,6 @@ import {
   AppClient,
   type AuthChangeEvent,
   type AuthClient,
-  type AuthError,
   type Session,
   type User,
 } from './app-client'
@@ -27,31 +26,48 @@ export function createClient(): AppClient {
 }
 
 // ------------------------------------------------------------------
-// Auth: reads the session the server holds in the httpOnly cookie.
-// Sign-in, sign-up and password flows move to the Firebase SDK in phase 2.
+// Auth: the session is the httpOnly cookie the server holds; sign-in,
+// sign-up and password flows run on the Firebase SDK
+// (src/lib/firebase/auth-flows.ts, loaded on first use).
 // ------------------------------------------------------------------
 
-const PENDING: AuthError = {
-  message: 'Sign-in is being moved to Firebase Authentication (migration phase 2).',
-}
+const flows = () => import('@/lib/firebase/auth-flows')
 
 /** How long a fetched session is reused before asking the server again. */
 const SESSION_TTL_MS = 60_000
 
+/** Renew the cookie when it has less than this left. */
+const RENEW_BEFORE_MS = 3 * 24 * 3600_000
+
 function browserAuth(): AuthClient {
   let cached: { user: User | null; at: number } | null = null
   let inFlight: Promise<User | null> | null = null
+  let renewing = false
   const listeners = new Set<(event: AuthChangeEvent, session: Session | null) => void>()
 
   const toSession = (user: User | null): Session | null => (user ? { user } : null)
+
+  const maybeRenew = (user: User | null, expiresAt: number | null | undefined) => {
+    if (!user || !expiresAt || renewing || expiresAt - Date.now() > RENEW_BEFORE_MS) return
+    renewing = true
+    flows()
+      .then((f) => f.renewSession(user.email))
+      .catch(() => {})
+      .finally(() => {
+        renewing = false
+      })
+  }
 
   const currentUser = (): Promise<User | null> => {
     if (cached && Date.now() - cached.at < SESSION_TTL_MS) return Promise.resolve(cached.user)
     inFlight ??= fetch('/api/auth/session', { credentials: 'same-origin', cache: 'no-store' })
       .then(async (res) => {
-        const user = res.ok ? ((await res.json()) as { user: User | null }).user : null
-        cached = { user, at: Date.now() }
-        return user
+        const body = res.ok
+          ? ((await res.json()) as { user: User | null; expiresAt?: number | null })
+          : { user: null }
+        cached = { user: body.user, at: Date.now() }
+        maybeRenew(body.user, body.expiresAt)
+        return body.user
       })
       .finally(() => {
         inFlight = null
@@ -61,6 +77,11 @@ function browserAuth(): AuthClient {
 
   const emit = (event: AuthChangeEvent, user: User | null) => {
     for (const listener of listeners) listener(event, toSession(user))
+  }
+
+  const signedIn = (user: User) => {
+    cached = { user, at: Date.now() }
+    emit('SIGNED_IN', user)
   }
 
   return {
@@ -94,13 +115,40 @@ function browserAuth(): AuthClient {
         credentials: 'same-origin',
       })
       if (!res.ok) return { error: { message: `Sign-out failed (${res.status})`, status: res.status } }
+      await (await flows()).signOutFirebase()
       cached = { user: null, at: Date.now() }
       emit('SIGNED_OUT', null)
       return { error: null }
     },
-    signInWithPassword: async () => ({ data: { user: null, session: null }, error: PENDING }),
-    signUp: async () => ({ data: { user: null, session: null }, error: PENDING }),
-    resetPasswordForEmail: async () => ({ data: null, error: PENDING }),
-    updateUser: async () => ({ data: { user: null }, error: PENDING }),
+    async signInWithPassword({ email, password }) {
+      const { value: user, error } = await (await flows()).signIn(email, password)
+      if (!user) return { data: { user: null, session: null }, error }
+      signedIn(user)
+      return { data: { user, session: { user } }, error: null }
+    },
+    async signUp({ email, password, options }) {
+      const fullName = typeof options?.data?.full_name === 'string' ? options.data.full_name : ''
+      const { error } = await (await flows()).signUp(email, password, fullName, options?.emailRedirectTo)
+      // As with email confirmations on: no session until the link is clicked.
+      return { data: { user: null, session: null }, error }
+    },
+    async resetPasswordForEmail(email, options) {
+      const { error } = await (await flows()).sendPasswordReset(email, options?.redirectTo)
+      return { data: error ? null : {}, error }
+    },
+    async updateUser(attributes) {
+      const f = await flows()
+      if (attributes.password) {
+        const { value: user, error } = await f.changePassword(attributes.password)
+        if (!user) return { data: { user: null }, error }
+        signedIn(user)
+        return { data: { user }, error: null }
+      }
+      if (attributes.email) {
+        const { error } = await f.changeEmail(attributes.email)
+        return { data: { user: error ? null : (cached?.user ?? null) }, error }
+      }
+      return { data: { user: null }, error: { message: 'Only email and password can be updated.' } }
+    },
   }
 }

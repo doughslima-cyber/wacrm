@@ -140,6 +140,10 @@ export const RATE_LIMITS = {
    *  successful redemption mutates two profiles and an invite row, so
    *  the abuse surface is "spam join attempts." */
   invitationRedeem: { limit: 10, windowMs: 60_000 },
+  /** Session creation (POST /api/auth/session, per-IP): one call per
+   *  sign-in, password change or cookie renewal. Password guessing is
+   *  throttled by Firebase Auth itself, before a token exists. */
+  sessionCreate: { limit: 20, windowMs: 60_000 },
   /** Admin-only account / member-management actions: create/revoke
    *  invitation, rename account, change member role, remove member,
    *  transfer ownership. 30/min per user is comfortably above any

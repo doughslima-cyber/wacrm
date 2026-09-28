@@ -9,7 +9,8 @@
   "scripts": {
     "db:migrate": "node db/migrate.mjs",
     "db:verify": "node db/migrate.mjs --verify-only",
-    "auth:dev-user": "node auth/dev-user.mjs"
+    "auth:dev-user": "node auth/dev-user.mjs",
+    "auth:configure": "node auth/configure.mjs"
   },
   "dependencies": {
     "@google-cloud/cloud-sql-connector": "^1.8.0",

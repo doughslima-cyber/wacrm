@@ -53,9 +53,11 @@ const SECURITY_HEADERS = [
       // and Supabase public-bucket audio/video the inbox renders.
       "media-src 'self' blob: https://*.supabase.co",
       "font-src 'self' data:",
-      // Supabase REST + realtime (WSS). All Meta API calls happen
-      // server-side, so graph.facebook.com does not belong here.
-      "connect-src 'self' https://*.supabase.co wss://*.supabase.co",
+      // Firebase Auth (sign-in, token refresh) and, until phases 3–4
+      // of docs/firebase-migration.md swap them, Supabase storage +
+      // realtime. All Meta API calls happen server-side, so
+      // graph.facebook.com does not belong here.
+      "connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://*.supabase.co wss://*.supabase.co",
       "frame-ancestors 'none'",
       "base-uri 'self'",
       "form-action 'self'",

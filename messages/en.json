@@ -1930,6 +1930,43 @@
     "sending": "Sending...",
     "sendLink": "Send reset link"
   },
+  "AuthErrors": {
+    "invalid_credentials": "Invalid email or password.",
+    "email_not_verified": "Confirm your email before signing in. We sent you a new link.",
+    "email_in_use": "An account with this email already exists.",
+    "weak_password": "Password should be at least 6 characters.",
+    "invalid_email": "Enter a valid email address.",
+    "too_many_requests": "Too many attempts. Try again in a few minutes.",
+    "requires_recent_login": "For your security, sign out and sign in again to make this change.",
+    "network": "Network error. Check your connection and try again.",
+    "session_failed": "Could not start your session. Try again.",
+    "unknown": "Something went wrong. Try again."
+  },
+  "AuthActionPage": {
+    "invalidTitle": "This link is no longer valid",
+    "invalidDesc": "It has expired or was already used. Request a new one.",
+    "requestNewLink": "Request a new link",
+    "backToSignIn": "Back to sign in",
+    "resetTitle": "Choose a new password",
+    "resetDesc": "For <strong>{email}</strong>",
+    "newPasswordLabel": "New password",
+    "confirmPasswordLabel": "Confirm new password",
+    "passwordTooShort": "Password must be at least {min} characters",
+    "passwordsMismatch": "Passwords do not match",
+    "saving": "Saving...",
+    "savePassword": "Save password",
+    "verifiedTitle": "Email confirmed",
+    "verifiedDesc": "Your email is confirmed. You can sign in now.",
+    "passwordChangedTitle": "Password changed",
+    "passwordChangedDesc": "Sign in with your new password.",
+    "emailChangedTitle": "Email changed",
+    "emailChangedDesc": "Sign in again with your new email address.",
+    "emailRecoveredTitle": "Email restored",
+    "emailRecoveredDesc": "Your sign-in email is {email} again. If you didn't request the change, reset your password too.",
+    "sendReset": "Send a password reset link",
+    "resetSent": "Reset link sent",
+    "continue": "Continue"
+  },
   "JoinPage": {
     "fail": {
       "notFoundTitle": "Invite not found",

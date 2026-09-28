@@ -36,9 +36,24 @@ export interface Session {
   user: User;
 }
 
+/** Why an auth call failed, for the pages to translate
+ *  (messages/*.json → AuthErrors). `message` is an English fallback. */
+export type AuthErrorCode =
+  | "invalid_credentials"
+  | "email_not_verified"
+  | "email_in_use"
+  | "weak_password"
+  | "invalid_email"
+  | "too_many_requests"
+  | "requires_recent_login"
+  | "network"
+  | "session_failed"
+  | "unknown";
+
 export interface AuthError {
   message: string;
   status?: number;
+  code?: AuthErrorCode;
 }
 
 export type AuthChangeEvent = "INITIAL_SESSION" | "SIGNED_IN" | "SIGNED_OUT";

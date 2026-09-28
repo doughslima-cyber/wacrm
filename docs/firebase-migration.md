@@ -290,26 +290,121 @@ Achados no caminho:
 
 ### Fase 2 — Autenticação (G)
 
-- [ ] Firebase Auth com provedor email/senha e templates de email em pt-BR.
-- [ ] Páginas `/login`, `/signup`, `/forgot-password` e reset: `signInWithPassword`,
+- [x] Firebase Auth com provedor email/senha e templates de email em pt-BR.
+- [x] Páginas `/login`, `/signup`, `/forgot-password` e reset: `signInWithPassword`,
       `signUp`, `resetPasswordForEmail` e `updateUser` passam a usar o SDK do
       Firebase.
-- [ ] `POST /api/auth/session`: recebe o ID token, cria o session cookie
+- [x] `POST /api/auth/session`: recebe o ID token, cria o session cookie
       (`__session`, httpOnly, SameSite=Lax), faz upsert em `auth.users` e
       grava as custom claims `accountIds`. (`GET` e `DELETE` já existem desde
       a Fase 1.)
 - [x] ~~Middleware~~ → `proxy.ts` validando o cookie (feito na Fase 1).
 - [x] Shim `auth.getUser()` / `auth.getSession()` / `onAuthStateChange`
-      (feito na Fase 1). Falta ligar `onAuthStateChange` ao `SIGNED_IN`
-      do SDK do Firebase.
-- [ ] `signOut({ scope: 'global' })`: `revokeRefreshTokens` e
-      `verifySessionCookie(cookie, true)` para o logout valer em todos os
-      dispositivos.
-- [ ] Convites: revisar `redeem_invitation` e `peek_invitation`, que cruzam
-      email com `auth.users`, e atualizar as custom claims ao entrar numa conta.
+      (feito na Fase 1), agora com `SIGNED_IN` depois do login.
+- [x] `signOut({ scope: 'global' })`: `revokeRefreshTokens` e checagem de
+      revogação em cada request, para o logout valer em todos os dispositivos.
+- [x] Convites: revisar `redeem_invitation` e `peek_invitation` e atualizar
+      as custom claims ao entrar numa conta.
 
 **Critério de saída:** cadastro → confirmação → login → convite → entrar na
 conta → trocar senha → logout, tudo funcionando de ponta a ponta.
+
+**Resultado (2026-09-28): aprovado.**
+
+Roteiro feito no navegador contra o Cloud SQL e o Firebase Auth reais, com
+dois usuários novos (A e B). Os links dos emails foram gerados pelo Admin API
+(`accounts:sendOobCode` com `returnOobLink`) e abertos na página
+`/auth/action`, o mesmo caminho do link que chega por email.
+
+- Cadastro de A → tela "verifique seu e-mail". Login antes de confirmar:
+  recusado ("Confirme seu e-mail antes de entrar") e um link novo é enviado.
+- Confirmação → login → `/dashboard`. O trigger `on_auth_user_created` criou
+  perfil e conta pessoal (owner), o nome veio do cadastro e a claim
+  `accountIds` foi gravada com a conta de A.
+- Convite de A (agente) → B se cadastra pelo link, confirma o email (o link
+  volta para `/join/<token>`), entra e aceita. B aparece como agente na conta
+  de A, e a claim de B passa a ter a conta de A.
+- Trocar senha (B): a senha antiga passa a ser recusada, a nova é aceita e
+  este navegador continua logado depois do TTL do cache.
+- "Sair de todos os dispositivos" (B): o navegador vai para `/login`, e uma
+  segunda sessão de B (aberta por curl) passa a receber 401 em `/api/rest` e
+  `user: null` em `/api/auth/session`.
+- Esqueci a senha (A) → `/auth/action` → nova senha → login. A senha antiga
+  mostra "E-mail ou senha inválidos."
+- Remover membro (A remove B): a claim de B vai para a nova conta pessoal dele.
+- Trocar email (A): o link confirma a troca, o Firebase derruba a sessão, e o
+  login com o email novo mantém o mesmo uuid e atualiza `auth.users.email` e
+  `profiles.email`.
+- `POST /api/auth/session` com `Origin` de outro site: 403.
+- `npm run typecheck` e `npm run lint` sem erro. `npm test`: as mesmas 5
+  falhas de fuso/ICU da Fase 1; os testes novos (`session.test.ts`,
+  `api/auth/session/route.test.ts`) passam.
+
+Como ficou:
+
+- `src/lib/firebase/client.ts` inicializa o app e o Auth do Firebase no
+  browser (`initializeAuth` sem resolver de popup: sem iframe nem gapi) e
+  define `languageCode` a partir de `NEXT_PUBLIC_APP_LOCALE`, para os emails
+  saírem no idioma da interface.
+- `src/lib/firebase/auth-flows.ts` tem os fluxos. É carregado sob demanda pelo
+  `auth` do cliente do browser (`src/lib/supabase/client.ts`), então as
+  páginas continuam chamando `supabase.auth.*`. As regras do Supabase com
+  confirmação ligada continuam valendo: email não confirmado não entra, e o
+  cadastro só cria o usuário no Firebase. A linha em `auth.users` nasce no
+  primeiro login. Se o email de verificação falhar, o usuário recém-criado é
+  apagado, para um novo cadastro não esbarrar em "email já existe".
+- `POST /api/auth/session` (`createSession` em `src/lib/auth/session.ts`)
+  exige ID token válido e não revogado, `email_verified`, e login de até 5 min
+  **ou** um cookie vivo do mesmo usuário (renovação). Depois chama a RPC
+  `auth_sync_user` (`infra/db/migrations/044_auth_session.sql`, só
+  `service_role`), sincroniza a claim `accountIds` e emite o cookie de 14
+  dias. O browser renova o cookie quando faltam menos de 3 dias, usando o
+  login que o SDK mantém. Recusa escrita cross-site e tem rate limit por IP.
+- Revogação: o cookie é validado localmente e o registro do usuário no
+  Firebase (`disabled`, `tokensValidAfterTime`) fica em cache por 60s
+  (`src/lib/auth/firebase-admin.ts`). `/api/rest`, as rotas e os server
+  components recusam na hora uma sessão revogada no mesmo processo. O
+  `proxy.ts` roda em outro realm (a doc do Next pede para não depender de
+  globais ali), então o redirecionamento dele pode atrasar até 60s. Nesse
+  intervalo a tela abre, mas sem dados.
+- Trocar senha: o Firebase revoga as outras sessões. Este navegador entra de
+  novo com a senha nova e recebe um cookie novo.
+- Trocar email: `verifyBeforeUpdateEmail`. O email só muda no clique e
+  derruba as sessões. O primeiro login depois disso atualiza `auth.users` e
+  `profiles.email`.
+- Custom claims (`src/lib/auth/claims.ts`): `accountIds` é copiado de
+  `profiles.account_id` no login, depois de `redeem_invitation` e depois de
+  `remove_account_member`. O browser força a atualização do ID token quando o
+  login avisa `claimsChanged`. Para quem foi removido por outra pessoa, a claim
+  nova chega no próximo refresh do token (≤ 1h).
+- Convites: `redeem_invitation` e `peek_invitation` trabalham só com o hash do
+  token e com `auth.uid()`, sem cruzar email com `auth.users`. Não precisaram
+  de mudança.
+- `/auth/action` é a página dos links de email (`verifyEmail`,
+  `resetPassword`, `verifyAndChangeEmail`, `recoverEmail`). Só segue
+  `continueUrl` da mesma origem. O `/auth/callback?next=/reset-password` que o
+  upstream usava nunca existiu no app.
+- Erros de auth têm `code` e são traduzidos por `AuthErrors` em
+  `messages/*.json` (en, pt, es, ko). `AuthActionPage` tem as telas novas.
+- CSP: `connect-src` inclui `identitytoolkit.googleapis.com` e
+  `securetoken.googleapis.com`.
+- `infra/auth/configure.mjs` (`npm run auth:configure`) aplica a
+  configuração do Auth: email/senha, locale padrão, URL de ação
+  `<site>/auth/action` e domínio autorizado. Hoje só o locale `pt-BR` foi
+  aplicado. Enquanto não houver URL pública, os emails usam o handler
+  hospedado do Firebase, que também confirma e volta para o `continueUrl`.
+- `infra/auth/dev-user.mjs` marca o email como verificado, porque o app agora
+  recusa login não verificado.
+- Localmente, o firebase-admin precisa de credencial Google para criar
+  cookies, checar revogação e gravar claims:
+  `FIREBASE_ADMIN_ACCESS_TOKEN_COMMAND=gcloud auth print-access-token` e
+  `GOOGLE_CLOUD_QUOTA_PROJECT` (ver `.env.local.example`).
+
+Ficam para a Fase 5: `roles/firebaseauth.admin` para a service account do
+Cloud Run; `npm run auth:configure` com `SITE_URL` da URL pública (URL de
+ação + domínio autorizado); `NEXT_PUBLIC_FIREBASE_API_KEY` e
+`NEXT_PUBLIC_FIREBASE_APP_ID` como build args; e o domínio próprio no envio
+de email (risco de spam, §6).
 
 ### Fase 3 — Storage (P)
 
@@ -325,7 +420,7 @@ conta → trocar senha → logout, tudo funcionando de ponta a ponta.
 
 ### Fase 4 — Realtime (G)
 
-- [ ] Migration nova `infra/db/migrations/044_realtime_notify.sql` com o trigger `pg_notify` nas 6
+- [ ] Migration nova `infra/db/migrations/045_realtime_notify.sql` com o trigger `pg_notify` nas 6
       tabelas.
 - [ ] Serviço `relay-realtime/` (Node, Cloud Run, `min-instances=1`): `LISTEN`,
       reconexão com backoff e escrita dos sinais no Firestore.
@@ -354,6 +449,12 @@ Segue a skill `firebase-ship`: pré-checagem antes de qualquer deploy.
       porque o `next.config.ts` manda `s-maxage=300` nas páginas.
 - [ ] Trigger do Cloud Build no push para `main`.
 - [ ] `engines.node` em `package.json` fixado em `22`.
+- [ ] `roles/firebaseauth.admin` para a service account `wacrm-web` (criar
+      session cookies, checar revogação, custom claims).
+- [ ] `cd infra && SITE_URL=<url pública> npm run auth:configure`: URL de ação
+      dos emails → `/auth/action` e domínio autorizado.
+- [ ] `NEXT_PUBLIC_FIREBASE_API_KEY` e `NEXT_PUBLIC_FIREBASE_APP_ID` como
+      build args.
 - [ ] Tirar `NEXT_PUBLIC_SUPABASE_*` e `SUPABASE_SERVICE_ROLE_KEY` do
       `Dockerfile`, do `docker-compose.yml` e da CI. O `.env.local.example`
       já foi atualizado na Fase 1.

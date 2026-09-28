@@ -1,9 +1,11 @@
-// Creates (or reuses) a hand-made test user and prints a session cookie
-// for it — the phase 1 stand-in for the sign-up / login flow that
-// phase 2 builds.
+// Creates (or reuses) a test user without going through the emails and
+// prints a session cookie for it. Handy for scripts and for a second
+// user in isolation tests; the app's own sign-up (/signup → email link
+// → /login) does the same for real users.
 //
 //   1. Firebase Auth user via the Identity Toolkit REST API (email +
-//      password; needs the Email/Password provider enabled).
+//      password; needs the Email/Password provider enabled), marked as
+//      email-verified — the app refuses unverified sign-ins.
 //   2. Matching auth.users row. The upstream on_auth_user_created
 //      trigger then creates the profile and a personal account, exactly
 //      as a Supabase signup did.
@@ -77,7 +79,23 @@ async function createSessionCookie(idToken) {
   return json.sessionCookie
 }
 
-const firebase = await firebaseSignIn()
+async function markEmailVerified(localId) {
+  const res = await fetch(`https://identitytoolkit.googleapis.com/v1/projects/${PROJECT}/accounts:update`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${ACCESS_TOKEN}`,
+      'x-goog-user-project': PROJECT,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ localId, emailVerified: true, displayName: NAME }),
+  })
+  if (!res.ok) throw new Error(`accounts:update failed: ${(await res.json()).error?.message ?? res.status}`)
+}
+
+const first = await firebaseSignIn()
+await markEmailVerified(first.localId)
+// Sign in again: only a new ID token carries email_verified: true.
+const firebase = { ...(await firebaseSignIn()), created: first.created }
 
 const db = await openDb()
 let row
