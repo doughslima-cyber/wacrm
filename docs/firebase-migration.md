@@ -408,15 +408,132 @@ de email (risco de spam, §6).
 
 ### Fase 3 — Storage (P)
 
-- [ ] Três prefixos no bucket padrão: `avatars/`, `flow-media/`, `chat-media/`.
-- [ ] `storage.rules`: leitura pública nos três (como hoje); escrita só em
+- [x] Três prefixos no bucket padrão: `avatars/`, `flow-media/`, `chat-media/`.
+- [x] `storage.rules`: leitura pública nos três (como hoje); escrita só em
       `{prefixo}/{accountId}/...` com `accountId` nas claims, respeitando os
       limites de tamanho e MIME que as migrations 008, 016 e 023 definem.
-- [ ] Adaptar `upload-media.ts` (upload, URL pública, remoção),
+- [x] Adaptar `upload-media.ts` (upload, URL pública, remoção),
       `mirror-inbound-media.ts` (upload no servidor com Admin SDK) e
       `profile-form.tsx`.
-- [ ] CSP em `next.config.ts`: trocar `*.supabase.co` em `media-src` e
+- [x] CSP em `next.config.ts`: trocar `*.supabase.co` em `media-src` e
       `connect-src` pelos hosts do Firebase Storage e do Firestore.
+- [x] Publicar as regras (`firebase deploy --only storage`), aplicar o CORS
+      (`cd infra && npm run storage:cors`) e dar
+      `roles/storage.objectAdmin` no bucket à service account `wacrm-web`.
+- [x] Validar contra o bucket real: avatar e mídia de flow pela UI,
+      regras com o ID token de um usuário real e o espelho de mídia
+      recebida (código do servidor).
+
+**Critério de saída:** uploads funcionando contra o bucket real, URLs que
+abrem sem login, e um usuário de outra conta sem conseguir gravar nem apagar
+na pasta da conta alheia.
+
+**Resultado (2026-09-28): aprovado.**
+
+Validação contra o projeto real (`npm run dev`, Cloud SQL, Firebase Auth e o
+bucket `crm-zap-cbd5d.firebasestorage.app`), com um usuário novo criado já
+verificado pela Admin API e login pela tela `/login`:
+
+- O ruleset publicado é idêntico ao `storage.rules` do repositório. O CORS
+  e o `roles/storage.objectAdmin` da `wacrm-web` estão no bucket.
+- Login: a claim do usuário passou a ter `accountIds` (a conta pessoal) e
+  `userId` (o uuid de `auth.users`).
+- Avatar (`profile-form.tsx`, sem mudança): um PNG foi gravado em
+  `avatars/<uuid>/avatar-<epoch>.png` e o perfil salvo com a URL, que
+  renderiza na tela. Anônimo: `GET` 200 (`image/png`,
+  `public, max-age=3600`). Listar `avatars/` dá 403.
+- Mídia de flow (`uploadAccountMedia`, sem mudança): no editor, nó
+  "Enviar mídia" → "Arquivo enviado.", objeto em
+  `flow-media/account-<uuid>/<epoch>-Banner_Fase_3.png`. O `fetch` da URL
+  pelo navegador (o caminho do download na inbox) responde 200, então o
+  CORS está certo. Nenhuma violação de CSP no console.
+- Regras no bucket real, com o ID token do usuário (REST do Firebase
+  Storage): gravar na própria conta em `chat-media` e `flow-media` 200;
+  em outra conta 403; `text/html` 403; 16 MB + 1 byte 403; anônimo 403;
+  avatar de outro usuário 403; fora dos três prefixos 403; `GET` anônimo
+  200; apagar o próprio 204 e o `GET` seguinte 404.
+- Espelho de mídia recebida (`mirrorInboundMedia` + `adminStorage`, com
+  só o download da Meta simulado): grava
+  `chat-media/account-<uuid>/inbound/<media id>-audio-<ts>.ogg` (o
+  `audio/ogg; codecs=opus` foi normalizado), a URL abre sem login, a
+  reentrega regrava o mesmo objeto, um `.exe` é recusado e o webhook fica
+  com a URL do proxy. `upsert: false` num objeto existente dá "The
+  resource already exists", e `remove` apaga (o `GET` seguinte dá 404).
+
+Não passaram pela UI: anexo e áudio no composer, mídia de template e a
+remoção de um anexo cancelado. Todos precisam de uma conversa ou de um
+número de WhatsApp conectado, e usam o mesmo `uploadAccountMedia` /
+`deleteAccountMedia` validado acima. Entram no roteiro da Fase 6
+("responder com áudio").
+
+Ficaram no projeto: o usuário de teste `p3-a-…@example.com`, um fluxo
+rascunho "Teste Fase 3 storage", o avatar dele e o PNG em `flow-media`.
+
+Como ficou:
+
+- Bucket: o padrão do projeto, `crm-zap-cbd5d.firebasestorage.app`, que já
+  existia em **US-EAST1** (a região de um bucket não muda depois de criado).
+  Cada antigo bucket do Supabase virou um prefixo:
+  `avatars/<uuid do usuário>/…`, `flow-media/account-<uuid>/…` e
+  `chat-media/account-<uuid>/…`, os mesmos caminhos que o app já montava.
+  Ter a mídia fora de São Paulo tem pouco custo: quem mais lê é a Meta, e
+  US-EAST1 entra na cota gratuita do Storage.
+- `src/lib/storage/buckets.ts` é a fonte única dos limites (2 MB para
+  avatares, 16 MB para as mídias; listas de MIME das migrations 008, 016,
+  023 e 039) e monta a URL pública
+  (`firebasestorage.googleapis.com/v0/b/<bucket>/o/<objeto>?alt=media`,
+  sem token: as regras liberam `get` para todos, como os buckets públicos
+  do Supabase). `buckets.test.ts` falha se o `storage.rules` divergir.
+- `storage.rules`: `get` público nos três prefixos, sem `list` (o Supabase
+  permitia listar, e nada no app usa isso). Para gravar em
+  `flow-media`/`chat-media`, a pasta precisa ser `account-<uuid>` de uma
+  conta presente na claim `accountIds`. Em `avatars`, a pasta precisa ser o
+  uuid da claim **`userId`**, que é nova. O UID do Firebase não é o uuid de
+  `auth.users`, e a migration 008 põe o avatar em `<auth.uid()>/`.
+  `src/lib/auth/claims.ts` grava `userId` junto com `accountIds`, e o
+  primeiro login depois do deploy completa a claim de quem já existe. O
+  resto do bucket fica fechado. O caminho legado de `flow-media` por
+  `auth.uid()` (migration 020) ficou de fora, porque não há arquivos
+  antigos.
+- Browser (`src/lib/firebase/storage.ts`, carregado sob demanda pelo
+  `storage` do cliente em `src/lib/supabase/client.ts`): o upload vai
+  direto ao Storage pelo SDK, autorizado pelo ID token. Antes, confere
+  tamanho e MIME para dar a mesma mensagem do Supabase em vez de um
+  "unauthorized" seco. Se as regras recusarem, força a renovação do token
+  (claim recém-mudada) e tenta uma vez mais. `upsert: false` não é
+  garantido; os caminhos que o usam têm timestamp.
+- Servidor (`src/lib/storage/admin-storage.ts`, o `storage` do
+  `supabaseAdmin()`): API JSON do Cloud Storage com a credencial do
+  firebase-admin (`googleAccessToken()` em
+  `src/lib/auth/firebase-admin.ts`). O wrapper de Storage do firebase-admin
+  não aceita o token do gcloud usado em dev. As regras não valem para ele,
+  então os limites do bucket são checados no código, como o Supabase fazia
+  com o service role. `upsert: false` vira `ifGenerationMatch=0`.
+- `upload-media.ts`, `mirror-inbound-media.ts` e `profile-form.tsx` **não
+  mudaram**: continuam chamando `supabase.storage.from(bucket)`, e o shim
+  mantém a API (`upload`, `getPublicUrl`, `remove`). Isso é menos diff
+  contra o upstream.
+- `basenameFromUrl` (`src/lib/media/filename.ts`) lê o nome do arquivo de
+  dentro do objeto codificado (`chat-media%2F…%2F<epoch>-nota.pdf`). Sem
+  isso, o download sairia com o prefixo de timestamp no nome.
+- CSP: `media-src` e `connect-src` trocam `*.supabase.co` por
+  `firebasestorage.googleapis.com`, e `connect-src` ganha
+  `firestore.googleapis.com` para a Fase 4. `wss://*.supabase.co` saiu.
+- CORS do bucket (`infra/storage/cors.json`): `GET`/`HEAD` de qualquer
+  origem. O download no inbox (`src/lib/media/blob-cache.ts`) busca a
+  mídia com `fetch`, e o conteúdo já é público.
+- `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET` é opcional (o padrão é
+  `<projeto>.firebasestorage.app`).
+- Testes: `infra/storage/rules.test.mjs` roda as regras no emulador do
+  Storage (`cd infra && npm run storage:test-rules`, precisa de Java):
+  **18/18**. Cobre escrita, leitura e remoção por membro, bloqueio de outra
+  conta, de um colega da mesma conta no avatar alheio, de sem claim e de
+  anônimo, pasta fora do formato, limites de tamanho e MIME, `list`
+  negado e o resto do bucket fechado. No app, `npm run typecheck` passa,
+  o lint não dá erro e `npm test` tem 1058/1063: as mesmas 5 falhas de
+  fuso/ICU das fases anteriores. Os testes novos são `buckets.test.ts`,
+  `admin-storage.test.ts`, o caso da claim `userId` em `session.test.ts`
+  e o da URL do Firebase em `filename.test.ts`.
 
 ### Fase 4 — Realtime (G)
 

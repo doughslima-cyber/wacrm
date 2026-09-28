@@ -124,7 +124,11 @@ export function basenameFromUrl(url: string): string {
     // Malformed escape sequence — keep the raw segment.
   }
 
-  const withoutStamp = decoded.replace(/^\d{10,}-/, "");
+  // A Firebase Storage URL carries the whole object name in one
+  // segment (`/o/chat-media%2Faccount-…%2F<epoch>-name.pdf`), so the
+  // decoded segment can still contain slashes.
+  const name = decoded.split("/").pop() ?? "";
+  const withoutStamp = name.replace(/^\d{10,}-/, "");
   return hasExtension(withoutStamp) ? sanitizeFilename(withoutStamp) : "";
 }
 

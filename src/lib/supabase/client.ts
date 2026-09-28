@@ -1,8 +1,10 @@
+import { publicObjectUrl } from '@/lib/storage/buckets'
 import {
   AppClient,
   type AuthChangeEvent,
   type AuthClient,
   type Session,
+  type StorageClient,
   type User,
 } from './app-client'
 
@@ -21,8 +23,33 @@ export function createClient(): AppClient {
     return new AppClient('http://localhost/api/rest', { auth: browserAuth() })
   }
 
-  browserClient = new AppClient(`${window.location.origin}/api/rest`, { auth: browserAuth() })
+  browserClient = new AppClient(`${window.location.origin}/api/rest`, {
+    auth: browserAuth(),
+    storage: browserStorage,
+  })
   return browserClient
+}
+
+// ------------------------------------------------------------------
+// Storage: uploads go straight from the browser to Cloud Storage for
+// Firebase, authorized by storage.rules (src/lib/firebase/storage.ts,
+// loaded on first use). Public URLs need no SDK.
+// ------------------------------------------------------------------
+
+const storageOps = () => import('@/lib/firebase/storage')
+
+const loadFailed = (err: unknown) => ({
+  data: null,
+  error: { message: (err as Error)?.message || 'Could not load file storage.' },
+})
+
+const browserStorage: StorageClient = {
+  from: (bucket) => ({
+    upload: (path, body, options) =>
+      storageOps().then((ops) => ops.upload(bucket, path, body, options), loadFailed),
+    getPublicUrl: (path) => ({ data: { publicUrl: publicObjectUrl(bucket, path) } }),
+    remove: (paths) => storageOps().then((ops) => ops.remove(bucket, paths), loadFailed),
+  }),
 }
 
 // ------------------------------------------------------------------

@@ -82,6 +82,19 @@ describe("basenameFromUrl", () => {
     ).toBe("my photo.jpg");
   });
 
+  it("reads the object name out of a Firebase Storage URL", () => {
+    expect(
+      basenameFromUrl(
+        "https://firebasestorage.googleapis.com/v0/b/p.firebasestorage.app/o/chat-media%2Faccount-abc%2F1770000000000-my%20invoice.pdf?alt=media",
+      ),
+    ).toBe("my invoice.pdf");
+    expect(
+      basenameFromUrl(
+        "https://firebasestorage.googleapis.com/v0/b/p.firebasestorage.app/o/chat-media%2Faccount-a%2Finbound%2F1234567890123456-contract.pdf?alt=media",
+      ),
+    ).toBe("contract.pdf");
+  });
+
   it("returns nothing for a proxy URL, whose last segment is a Meta id", () => {
     expect(basenameFromUrl("/api/whatsapp/media/1234567890123456")).toBe("");
   });

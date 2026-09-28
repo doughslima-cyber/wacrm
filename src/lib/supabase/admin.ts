@@ -7,6 +7,7 @@
 // per-module copies in src/lib/{ai,automations,flows}/admin-client.ts
 // now re-export this one.
 
+import { adminStorage } from "@/lib/storage/admin-storage";
 import { AppClient, noUserAuth, type SupabaseClient } from "./app-client";
 import { postgrestUrl, signedPostgrestFetch } from "./postgrest";
 
@@ -17,6 +18,7 @@ export function supabaseAdmin(): SupabaseClient {
   adminClient ??= new AppClient(postgrestUrl(), {
     fetch: signedPostgrestFetch(async () => ({ role: "service_role" })),
     auth: noUserAuth,
+    storage: adminStorage,
   });
   return adminClient;
 }

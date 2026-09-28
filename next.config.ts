@@ -45,19 +45,21 @@ const SECURITY_HEADERS = [
       "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
       // Tailwind + inline style attributes on lots of components.
       "style-src 'self' 'unsafe-inline'",
-      // Supabase public-bucket avatars, contact avatars (arbitrary
+      // Public avatars from Cloud Storage, contact avatars (arbitrary
       // https URLs paste-able from the UI), OG images, data URLs for
       // tiny inline assets.
       "img-src 'self' data: blob: https:",
       // Outbound media previews (blob: from MediaRecorder + file picker)
-      // and Supabase public-bucket audio/video the inbox renders.
-      "media-src 'self' blob: https://*.supabase.co",
+      // and the chat-media audio/video the inbox renders from Cloud
+      // Storage for Firebase.
+      "media-src 'self' blob: https://firebasestorage.googleapis.com",
       "font-src 'self' data:",
-      // Firebase Auth (sign-in, token refresh) and, until phases 3–4
-      // of docs/firebase-migration.md swap them, Supabase storage +
-      // realtime. All Meta API calls happen server-side, so
-      // graph.facebook.com does not belong here.
-      "connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://*.supabase.co wss://*.supabase.co",
+      // Firebase Auth (sign-in, token refresh), Cloud Storage for
+      // Firebase (uploads, and fetching media for download) and
+      // Firestore (realtime signals, docs/firebase-migration.md §3.4).
+      // All Meta API calls happen server-side, so graph.facebook.com
+      // does not belong here.
+      "connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firebasestorage.googleapis.com https://firestore.googleapis.com",
       "frame-ancestors 'none'",
       "base-uri 'self'",
       "form-action 'self'",

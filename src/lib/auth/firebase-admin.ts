@@ -3,10 +3,12 @@
 // Verifying tokens and session cookies only needs Google's public
 // keys, but minting session cookies, reading users (revocation),
 // revoking sessions and writing custom claims call the Identity
-// Toolkit API and need a Google credential:
+// Toolkit API and need a Google credential (the service-role Storage
+// adapter borrows the same one):
 //
 //   Cloud Run   Application Default Credentials (the service account
-//               the service runs as; needs roles/firebaseauth.admin).
+//               the service runs as; needs roles/firebaseauth.admin,
+//               and roles/storage.objectAdmin on the Storage bucket).
 //   Local dev   FIREBASE_ADMIN_ACCESS_TOKEN_COMMAND, a command that
 //               prints an OAuth access token, e.g.
 //               `gcloud auth print-access-token`. A user token also
@@ -15,7 +17,7 @@
 
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import { applicationDefault, getApps, initializeApp, type Credential } from "firebase-admin/app";
+import { applicationDefault, getApps, initializeApp, type App, type Credential } from "firebase-admin/app";
 import { getAuth, type Auth } from "firebase-admin/auth";
 
 /** gcloud access tokens live 1h; the reported lifetime is kept short
@@ -35,15 +37,36 @@ export function firebaseProjectId(): string | undefined {
   return process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ?? process.env.GOOGLE_CLOUD_PROJECT;
 }
 
-export function firebaseAuth(): Auth {
+function firebaseAdminApp(): App {
   const command = process.env.FIREBASE_ADMIN_ACCESS_TOKEN_COMMAND;
-  const app =
+  return (
     getApps()[0] ??
     initializeApp({
       projectId: firebaseProjectId(),
       credential: command ? commandCredential(command) : applicationDefault(),
-    });
-  return getAuth(app);
+    })
+  );
+}
+
+export function firebaseAuth(): Auth {
+  return getAuth(firebaseAdminApp());
+}
+
+let cachedToken: { value: string; expiresAt: number } | null = null;
+
+/**
+ * An OAuth access token from the same credential, for Google APIs
+ * called directly over REST (Cloud Storage, in src/lib/storage/
+ * admin-storage.ts). Reused until a minute before it expires, since
+ * the local-dev credential shells out to gcloud.
+ */
+export async function googleAccessToken(): Promise<string> {
+  if (cachedToken && cachedToken.expiresAt - 60_000 > Date.now()) return cachedToken.value;
+  const credential = firebaseAdminApp().options.credential;
+  if (!credential) throw new Error("firebase-admin has no credential");
+  const { access_token, expires_in } = await credential.getAccessToken();
+  cachedToken = { value: access_token, expiresAt: Date.now() + expires_in * 1000 };
+  return access_token;
 }
 
 // ------------------------------------------------------------------

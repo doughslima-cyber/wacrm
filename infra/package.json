@@ -2,7 +2,7 @@
   "name": "wacrm-infra",
   "private": true,
   "type": "module",
-  "description": "Google Cloud / Firebase infrastructure for WACRM: Cloud SQL migrations, PostgREST and the realtime relay.",
+  "description": "Google Cloud / Firebase infrastructure for WACRM: Cloud SQL migrations, PostgREST, Storage rules and the realtime relay.",
   "engines": {
     "node": ">=22"
   },
@@ -10,12 +10,18 @@
     "db:migrate": "node db/migrate.mjs",
     "db:verify": "node db/migrate.mjs --verify-only",
     "auth:dev-user": "node auth/dev-user.mjs",
-    "auth:configure": "node auth/configure.mjs"
+    "auth:configure": "node auth/configure.mjs",
+    "storage:test-rules": "firebase emulators:exec --only storage --project demo-wacrm --config ../firebase.json \"node --test storage/rules.test.mjs\"",
+    "storage:cors": "gcloud storage buckets update gs://crm-zap-cbd5d.firebasestorage.app --cors-file=storage/cors.json"
   },
   "dependencies": {
     "@google-cloud/cloud-sql-connector": "^1.8.0",
     "@supabase/postgrest-js": "2.108.2",
     "google-auth-library": "^10.9.1",
     "pg": "^8.16.0"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.2",
+    "firebase": "^12.19.0"
   }
 }

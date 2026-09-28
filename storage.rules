@@ -1,0 +1,104 @@
+rules_version = '2';
+
+// Cloud Storage for Firebase: the project's default bucket.
+//
+// The three top-level prefixes are what used to be Supabase Storage
+// buckets (docs/firebase-migration.md, phase 3). As there, anyone can
+// read an object by its URL (Meta fetches outbound media that way) and
+// only the owner can write:
+//
+//   avatars/<user uuid>/...           the user (`userId` claim), migration 008
+//   flow-media/account-<uuid>/...     account members (`accountIds`), 016 + 020
+//   chat-media/account-<uuid>/...     account members (`accountIds`), 023 + 039
+//
+// The claims come from src/lib/auth/claims.ts. The size and MIME limits
+// mirror src/lib/storage/buckets.ts; buckets.test.ts fails when they
+// drift. The server's service-role writes (inbound media mirror) use the
+// Cloud Storage API directly and skip these rules, like Supabase's
+// service role skipped RLS.
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isUser(userId) {
+      return signedIn() && request.auth.token.get('userId', '') == userId;
+    }
+
+    // `account-<uuid>` for an account in the caller's claim.
+    function isMember(folder) {
+      return signedIn()
+        && folder.matches('account-[0-9a-f-]{36}')
+        && folder.replace('^account-', '') in request.auth.token.get('accountIds', []);
+    }
+
+    function fits(maxBytes, types) {
+      return request.resource.size <= maxBytes
+        && request.resource.contentType in types;
+    }
+
+    // 2 MB.
+    function avatarFits() {
+      return fits(2097152, [
+        'image/png', 'image/jpeg', 'image/webp', 'image/gif'
+      ]);
+    }
+
+    // 16 MB.
+    function flowMediaFits() {
+      return fits(16777216, [
+        'image/png', 'image/jpeg', 'image/webp',
+        'video/mp4', 'video/3gpp',
+        'application/pdf',
+        'application/vnd.ms-powerpoint',
+        'application/msword',
+        'application/vnd.ms-excel',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'text/plain'
+      ]);
+    }
+
+    // 16 MB.
+    function chatMediaFits() {
+      return fits(16777216, [
+        'image/png', 'image/jpeg', 'image/webp', 'image/gif',
+        'video/mp4', 'video/3gpp', 'video/3gp', 'video/quicktime',
+        'application/pdf',
+        'application/vnd.ms-powerpoint',
+        'application/msword',
+        'application/vnd.ms-excel',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'text/plain',
+        'audio/ogg', 'audio/mpeg', 'audio/aac', 'audio/mp4', 'audio/amr', 'audio/opus'
+      ]);
+    }
+
+    // Reads are `get` only: a URL opens its object, but nobody can list
+    // a folder (Supabase's public buckets allowed that; nothing uses it).
+
+    match /avatars/{userId}/{rest=**} {
+      allow get: if true;
+      allow create, update: if isUser(userId) && avatarFits();
+      allow delete: if isUser(userId);
+    }
+
+    match /flow-media/{folder}/{rest=**} {
+      allow get: if true;
+      allow create, update: if isMember(folder) && flowMediaFits();
+      allow delete: if isMember(folder);
+    }
+
+    match /chat-media/{folder}/{rest=**} {
+      allow get: if true;
+      allow create, update: if isMember(folder) && chatMediaFits();
+      allow delete: if isMember(folder);
+    }
+  }
+}

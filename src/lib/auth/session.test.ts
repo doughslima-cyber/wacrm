@@ -144,7 +144,7 @@ describe("getSessionUser", () => {
 });
 
 describe("createSession", () => {
-  it("syncs auth.users, writes the account claim and mints the cookie", async () => {
+  it("syncs auth.users, writes the account and user claims and mints the cookie", async () => {
     users.set("u-new", { disabled: false });
     const idToken = token("u-new", { name: "Ana" });
 
@@ -158,6 +158,7 @@ describe("createSession", () => {
     });
     expect(fakeAuth.setCustomUserClaims).toHaveBeenCalledWith("u-new", {
       accountIds: ["account-1"],
+      userId: ROW.id,
     });
     expect(session).toEqual({
       cookie: `cookie-for-${idToken}`,
@@ -167,7 +168,10 @@ describe("createSession", () => {
   });
 
   it("leaves unchanged claims alone", async () => {
-    users.set("u-same", { disabled: false, customClaims: { accountIds: ["account-1"], x: 1 } });
+    users.set("u-same", {
+      disabled: false,
+      customClaims: { accountIds: ["account-1"], userId: ROW.id, x: 1 },
+    });
     const session = await createSession(token("u-same"), undefined);
     expect(fakeAuth.setCustomUserClaims).not.toHaveBeenCalled();
     expect(session.claimsChanged).toBe(false);
@@ -179,8 +183,19 @@ describe("createSession", () => {
     await createSession(token("u-moved"), undefined);
     expect(fakeAuth.setCustomUserClaims).toHaveBeenCalledWith("u-moved", {
       accountIds: ["account-2"],
+      userId: ROW.id,
       x: 1,
     });
+  });
+
+  it("adds the user claim to a token that only has the account claim", async () => {
+    users.set("u-old", { disabled: false, customClaims: { accountIds: ["account-1"] } });
+    const session = await createSession(token("u-old"), undefined);
+    expect(fakeAuth.setCustomUserClaims).toHaveBeenCalledWith("u-old", {
+      accountIds: ["account-1"],
+      userId: ROW.id,
+    });
+    expect(session.claimsChanged).toBe(true);
   });
 
   it("refuses an invalid ID token", async () => {

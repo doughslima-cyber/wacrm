@@ -90,7 +90,9 @@ export interface AuthClient {
 }
 
 // ------------------------------------------------------------------
-// Storage (Cloud Storage for Firebase lands in phase 3)
+// Storage: Cloud Storage for Firebase. The browser client uploads with
+// the Firebase SDK (src/lib/firebase/storage.ts), the service-role
+// client over the Cloud Storage API (src/lib/storage/admin-storage.ts).
 // ------------------------------------------------------------------
 
 export interface StorageError {
@@ -112,9 +114,12 @@ export interface StorageClient {
 }
 
 const STORAGE_PENDING: StorageError = {
-  message: "File storage is not available yet (Firebase migration, phase 3).",
+  message: "File storage is not available on this client. Upload from the browser or use the service-role client.",
 };
 
+/** For clients with no storage of their own: the per-request server
+ *  client (nothing server-side uploads as the user) and the throwaway
+ *  instance client components get while rendering on the server. */
 export const pendingStorage: StorageClient = {
   from: () => ({
     upload: async () => ({ data: null, error: STORAGE_PENDING }),
