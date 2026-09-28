@@ -1,0 +1,19 @@
+{
+  "name": "wacrm-infra",
+  "private": true,
+  "type": "module",
+  "description": "Google Cloud / Firebase infrastructure for WACRM: Cloud SQL migrations, PostgREST and the realtime relay.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "db:migrate": "node db/migrate.mjs",
+    "db:verify": "node db/migrate.mjs --verify-only"
+  },
+  "dependencies": {
+    "@google-cloud/cloud-sql-connector": "^1.8.0",
+    "@supabase/postgrest-js": "2.108.2",
+    "google-auth-library": "^10.9.1",
+    "pg": "^8.16.0"
+  }
+}
