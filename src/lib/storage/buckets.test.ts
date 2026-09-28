@@ -64,10 +64,12 @@ describe("uploadRejection", () => {
 });
 
 describe("object URLs", () => {
-  it("defaults to the project's firebasestorage.app bucket", () => {
+  it("requires the bucket name instead of guessing it from the project", () => {
     vi.stubEnv("NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET", "");
     vi.stubEnv("NEXT_PUBLIC_FIREBASE_PROJECT_ID", "demo-project");
-    expect(storageBucketName()).toBe("demo-project.firebasestorage.app");
+    expect(() => storageBucketName()).toThrow(/NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET/);
+    vi.stubEnv("NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET", "demo-project.appspot.com");
+    expect(storageBucketName()).toBe("demo-project.appspot.com");
   });
 
   it("builds a token-free public URL with the object name encoded", () => {

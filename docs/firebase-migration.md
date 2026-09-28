@@ -522,8 +522,9 @@ Como ficou:
 - CORS do bucket (`infra/storage/cors.json`): `GET`/`HEAD` de qualquer
   origem. O download no inbox (`src/lib/media/blob-cache.ts`) busca a
   mídia com `fetch`, e o conteúdo já é público.
-- `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET` é opcional (o padrão é
-  `<projeto>.firebasestorage.app`).
+- `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET` é obrigatória (o `storageBucket`
+  da config web do Firebase). Não é deduzida do projeto porque projetos
+  antigos usam `<projeto>.appspot.com`.
 - Testes: `infra/storage/rules.test.mjs` roda as regras no emulador do
   Storage (`cd infra && npm run storage:test-rules`, precisa de Java):
   **18/18**. Cobre escrita, leitura e remoção por membro, bloqueio de outra
@@ -570,8 +571,8 @@ Segue a skill `firebase-ship`: pré-checagem antes de qualquer deploy.
       session cookies, checar revogação, custom claims).
 - [ ] `cd infra && SITE_URL=<url pública> npm run auth:configure`: URL de ação
       dos emails → `/auth/action` e domínio autorizado.
-- [ ] `NEXT_PUBLIC_FIREBASE_API_KEY` e `NEXT_PUBLIC_FIREBASE_APP_ID` como
-      build args.
+- [ ] `NEXT_PUBLIC_FIREBASE_API_KEY`, `NEXT_PUBLIC_FIREBASE_APP_ID` e
+      `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET` como build args.
 - [ ] Tirar `NEXT_PUBLIC_SUPABASE_*` e `SUPABASE_SERVICE_ROLE_KEY` do
       `Dockerfile`, do `docker-compose.yml` e da CI. O `.env.local.example`
       já foi atualizado na Fase 1.

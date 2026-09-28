@@ -96,13 +96,17 @@ export function cacheControlHeader(value: string | undefined): string {
 // Where the objects live
 // ------------------------------------------------------------------
 
-/** The project's default Cloud Storage for Firebase bucket. */
+/**
+ * The Cloud Storage for Firebase bucket, as the Firebase console's web
+ * app config names it (`storageBucket`). Required rather than derived
+ * from the project id: older projects' default bucket is
+ * `<project>.appspot.com`, newer ones' `<project>.firebasestorage.app`,
+ * and guessing wrong would address a bucket that doesn't exist.
+ */
 export function storageBucketName(): string {
-  const explicit = process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET;
-  if (explicit) return explicit;
-  const project = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
-  if (!project) throw new Error("NEXT_PUBLIC_FIREBASE_PROJECT_ID is not set");
-  return `${project}.firebasestorage.app`;
+  const bucket = process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET;
+  if (!bucket) throw new Error("NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET is not set");
+  return bucket;
 }
 
 /** `<bucket>/<path>` → the object name inside the default bucket. */

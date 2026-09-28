@@ -18,8 +18,6 @@ import {
   type Auth,
 } from "firebase/auth";
 
-import { storageBucketName } from "@/lib/storage/buckets";
-
 // Email templates (verification, password reset, email change) follow
 // the UI language. Firebase's locale codes for the app's catalogues.
 const EMAIL_LOCALE: Record<string, string> = {
@@ -40,7 +38,7 @@ export function firebaseApp(): FirebaseApp {
         process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ??
         `${process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID}.firebaseapp.com`,
       projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-      storageBucket: storageBucketName(),
+      storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
       appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
     })
   );
