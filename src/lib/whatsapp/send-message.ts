@@ -19,7 +19,7 @@
 // without duplicating ~250 lines of Meta plumbing.
 // ============================================================
 
-import type { SupabaseClient } from '@supabase/supabase-js';
+import type { SupabaseClient } from '@/lib/supabase/app-client';
 
 import {
   sendTextMessage,

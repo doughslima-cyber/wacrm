@@ -53,8 +53,8 @@ vi.mock('next/server', () => ({
   },
 }))
 
-vi.mock('@supabase/supabase-js', () => ({
-  createClient: () => ({
+vi.mock('@/lib/supabase/admin', () => ({
+  supabaseAdmin: () => ({
     from(table: string) {
       switch (table) {
         case 'whatsapp_config':

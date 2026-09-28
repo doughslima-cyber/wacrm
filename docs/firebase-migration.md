@@ -187,19 +187,106 @@ com `run.invoker` no PostgREST); secrets `pg-postgres-password`,
 
 ### Fase 1 — Camada de dados (M)
 
-- [ ] Rota `src/app/api/rest/[...path]/route.ts`: valida a sessão, emite o JWT
+- [x] Rota `src/app/api/rest/[...path]/route.ts`: valida a sessão, emite o JWT
       curto e repassa método, headers `Prefer`/`Range` e corpo ao PostgREST.
-- [ ] Reescrever `src/lib/supabase/client.ts` e `server.ts` para montar um
+- [x] Reescrever `src/lib/supabase/client.ts` e `server.ts` para montar um
       `PostgrestClient` apontando para `/api/rest` (browser) ou direto para o
       PostgREST interno (servidor), mantendo o shape `{ from, rpc, auth,
       storage, channel }`.
-- [ ] Juntar os três `admin-client.ts` (ai, automations, flows) e os usos
-      diretos de `SUPABASE_SERVICE_ROLE_KEY` em um único `createAdminClient()`.
-- [ ] Trocar os tipos importados de `@supabase/supabase-js` pelos equivalentes
+- [x] Juntar os três `admin-client.ts` (ai, automations, flows) e os usos
+      diretos de `SUPABASE_SERVICE_ROLE_KEY` em um único cliente de service role.
+- [x] Trocar os tipos importados de `@supabase/supabase-js` pelos equivalentes
       de `@supabase/postgrest-js`.
 
 **Critério de saída:** `npm run typecheck` e `npm test` verdes; inbox, contatos
 e pipelines carregam dados reais com um usuário criado à mão.
+
+**Resultado (2026-09-28): aprovado.**
+
+Validação com dados reais (`npm run dev` contra o Cloud SQL, usuário criado
+por `npm run auth:dev-user`):
+
+- Sem cookie: `/inbox` redireciona para `/login`, e `/api/rest` como `anon`
+  responde `[]`.
+- Com o cookie: `/api/auth/session` devolve o uuid de `auth.users`, e
+  `/api/rest/accounts` só a conta do próprio usuário. Inbox, contatos,
+  pipelines e o painel carregam, sem erro no console nem no servidor.
+- Escrita pela UI: criar um contato (`POST contacts` 201, lista e contagem
+  `count=exact` atualizam) e um pipeline (`pipelines` + insert em lote de
+  `pipeline_stages`, 201). Um insert sem `account_id` é recusado pela RLS
+  (`42501`, 403).
+- Caminho do servidor: `GET /api/whatsapp/config` (usa o `createClient()`
+  do servidor) responde `no_config`, como esperado para uma conta nova.
+
+Achados no caminho:
+
+- Os quatro secrets da Fase 0 tinham um `\r` no fim (gravados a partir de
+  um CRLF). O bash o preservava e o PowerShell o descartava, então a senha
+  "certa" dependia do shell. Todos foram regravados sem ele (senhas do
+  `postgres` e do `authenticator` trocadas juntas, PostgREST na revisão
+  `postgrest-00002`), e as versões antigas desativadas. Ao gravar um secret
+  pelo PowerShell, use `--data-file` com um arquivo escrito sem quebra de
+  linha, e nunca canalize uma string para o `gcloud`.
+- O Cloud Run recusa o ID token de usuário do `gcloud` (401, o `aud` é o
+  client OAuth do gcloud). Localmente, o app precisa de um token da
+  `wacrm-web` via `--impersonate-service-account` com `--audiences` (ver
+  `.env.local.example`).
+
+- `src/lib/supabase/app-client.ts`: `AppClient` estende o `PostgrestClient`
+  (`@supabase/postgrest-js` 2.108.2 fixado, a versão da Fase 0) e pendura
+  `auth`, `storage` e `channel()`. O tipo `SupabaseClient` agora é esse
+  `AppClient`, então os helpers tipados `(supabase: SupabaseClient, …)` só
+  trocaram a linha do import (`@/lib/supabase/app-client`).
+- `server.ts` fala direto com o PostgREST. `postgrest.ts` assina cada
+  request com um JWT de 60s e o ID token do Google (metadata server no Cloud
+  Run; localmente, `POSTGREST_ID_TOKEN_COMMAND`). O JWT é emitido a cada
+  request, não uma vez por cliente, para tarefas longas (broadcast,
+  automação) não enviarem um JWT vencido no meio do caminho.
+- `src/lib/supabase/admin.ts` tem o único `supabaseAdmin()`. Os três
+  `admin-client.ts` só reexportam esse cliente, e o webhook e
+  `whatsapp/config` deixaram de ter cópias próprias. O nome `supabaseAdmin`
+  continuou para não mexer nos chamadores nem nos mocks de teste.
+- `/api/rest`: aceita só `/<tabela>` e `/rpc/<função>`, descarta o
+  `Authorization` do browser e recusa escrita cross-site (`Sec-Fetch-Site` /
+  `Origin`). Sem cookie, a request vai como `anon`, como a anon key fazia;
+  com cookie inválido, responde 401, para uma sessão morta não aparecer como
+  lista vazia.
+- `storage` e `channel()` são placeholders com a mesma API: upload devolve
+  erro e o canal nunca dispara. As telas carregam, só não atualizam ao vivo
+  (ficam para as Fases 3 e 4).
+- `@supabase/ssr` e `@supabase/supabase-js` saíram do `package.json`, e
+  entrou o `firebase-admin` 14.
+- `npm run typecheck` e `npm run lint` passam sem erro. `npm test`:
+  1012/1017; as 5 falhas (`currency.test.ts`, `date-utils.test.ts`) já
+  existiam, vêm do fuso e do ICU do Node 26 local e não tocam código
+  alterado.
+
+**Itens puxados da Fase 2**, porque sem eles nenhuma tela carrega:
+
+- Verificação do session cookie (`src/lib/auth/session.ts`): cookie
+  `__session`, o único nome que o Firebase Hosting repassa ao Cloud Run.
+  O UID é mapeado para o uuid de `auth.users` pela RPC
+  `auth_user_by_firebase_uid` (`infra/db/migrations/043_auth_user_lookup.sql`,
+  só `service_role` executa), com cache de 60s em memória.
+- `middleware.ts` → `proxy.ts` (Next 16, roda em Node), validando o cookie
+  com as mesmas regras de redirecionamento e convite.
+- `GET /api/auth/session` (quem sou eu, para o `auth.getUser()` do browser)
+  e `DELETE` (logout deste navegador). `signOut({ scope: 'global' })`
+  responde 501 até a Fase 2 revogar os refresh tokens.
+- Os usos de `access_token` em `whatsapp/config`, `broadcast` e
+  `verify-registration` são o token da Meta, não da sessão. Não há nada de
+  auth para revisar ali.
+
+**Para fechar o critério de saída** (precisa de acesso ao projeto GCP):
+
+1. `cd infra && npm run db:migrate` para aplicar a `043_auth_user_lookup.sql`.
+2. Ativar o provedor Email/Senha no Firebase Auth.
+3. `npm run auth:dev-user` (em `infra/`) cria o usuário à mão, a linha em
+   `auth.users` (o trigger cria perfil e conta) e imprime um session cookie.
+4. `.env.local` com `POSTGREST_URL`, `POSTGREST_JWT_SECRET`,
+   `POSTGREST_ID_TOKEN_COMMAND` e `NEXT_PUBLIC_FIREBASE_PROJECT_ID`,
+   `npm run dev`, gravar o cookie `__session` em `localhost` e abrir inbox,
+   contatos e pipelines.
 
 ### Fase 2 — Autenticação (G)
 
@@ -207,16 +294,17 @@ e pipelines carregam dados reais com um usuário criado à mão.
 - [ ] Páginas `/login`, `/signup`, `/forgot-password` e reset: `signInWithPassword`,
       `signUp`, `resetPasswordForEmail` e `updateUser` passam a usar o SDK do
       Firebase.
-- [ ] `POST /api/auth/session`: recebe o ID token, cria o session cookie,
-      faz upsert em `auth.users` e grava as custom claims `accountIds`.
-      `DELETE` faz o `signOut`.
-- [ ] Middleware: trocar `supabase.auth.getUser()` pela validação do cookie,
-      mantendo as regras de redirecionamento e o fluxo de convite
-      (`?invite=` → `/join/<token>`).
-- [ ] Shim `auth.getUser()` / `auth.getSession()` / `onAuthStateChange` no
-      cliente novo, para as 46 chamadas continuarem funcionando. Revisar à mão
-      os usos de `access_token` em `src/app/api/whatsapp/config/route.ts`,
-      `broadcast/route.ts` e `verify-registration/route.ts`.
+- [ ] `POST /api/auth/session`: recebe o ID token, cria o session cookie
+      (`__session`, httpOnly, SameSite=Lax), faz upsert em `auth.users` e
+      grava as custom claims `accountIds`. (`GET` e `DELETE` já existem desde
+      a Fase 1.)
+- [x] ~~Middleware~~ → `proxy.ts` validando o cookie (feito na Fase 1).
+- [x] Shim `auth.getUser()` / `auth.getSession()` / `onAuthStateChange`
+      (feito na Fase 1). Falta ligar `onAuthStateChange` ao `SIGNED_IN`
+      do SDK do Firebase.
+- [ ] `signOut({ scope: 'global' })`: `revokeRefreshTokens` e
+      `verifySessionCookie(cookie, true)` para o logout valer em todos os
+      dispositivos.
 - [ ] Convites: revisar `redeem_invitation` e `peek_invitation`, que cruzam
       email com `auth.users`, e atualizar as custom claims ao entrar numa conta.
 
@@ -237,7 +325,7 @@ conta → trocar senha → logout, tudo funcionando de ponta a ponta.
 
 ### Fase 4 — Realtime (G)
 
-- [ ] Migration nova `043_realtime_notify.sql` com o trigger `pg_notify` nas 6
+- [ ] Migration nova `infra/db/migrations/044_realtime_notify.sql` com o trigger `pg_notify` nas 6
       tabelas.
 - [ ] Serviço `relay-realtime/` (Node, Cloud Run, `min-instances=1`): `LISTEN`,
       reconexão com backoff e escrita dos sinais no Firestore.
@@ -266,8 +354,9 @@ Segue a skill `firebase-ship`: pré-checagem antes de qualquer deploy.
       porque o `next.config.ts` manda `s-maxage=300` nas páginas.
 - [ ] Trigger do Cloud Build no push para `main`.
 - [ ] `engines.node` em `package.json` fixado em `22`.
-- [ ] Remover `NEXT_PUBLIC_SUPABASE_*` e `SUPABASE_SERVICE_ROLE_KEY` de
-      `.env.local.example` e documentar as variáveis novas.
+- [ ] Tirar `NEXT_PUBLIC_SUPABASE_*` e `SUPABASE_SERVICE_ROLE_KEY` do
+      `Dockerfile`, do `docker-compose.yml` e da CI. O `.env.local.example`
+      já foi atualizado na Fase 1.
 - [ ] Cloud Scheduler chamando `/api/automations/cron` e `/api/flows/cron` com
       o secret.
 - [ ] Apontar o webhook do Meta para a URL do App Hosting e configurar

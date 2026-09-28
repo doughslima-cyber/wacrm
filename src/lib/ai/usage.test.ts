@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { logAiUsage } from './usage'
-import type { SupabaseClient } from '@supabase/supabase-js'
+import type { SupabaseClient } from '@/lib/supabase/app-client'
 
 function fakeDb() {
   const insert = vi.fn().mockResolvedValue({ error: null })

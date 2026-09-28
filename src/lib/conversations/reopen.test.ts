@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import type { SupabaseClient } from '@supabase/supabase-js'
+import type { SupabaseClient } from '@/lib/supabase/app-client'
 import { reopenClosedConversation } from './reopen'
 
 /**

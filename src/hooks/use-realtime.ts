@@ -3,7 +3,7 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { Message, Conversation } from "@/types";
-import type { RealtimeChannel } from "@supabase/supabase-js";
+import type { RealtimeChannel } from "@/lib/supabase/app-client";
 
 interface RealtimeEvent<T> {
   eventType: "INSERT" | "UPDATE" | "DELETE";

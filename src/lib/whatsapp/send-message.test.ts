@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { SupabaseClient } from '@supabase/supabase-js';
+import type { SupabaseClient } from '@/lib/supabase/app-client';
 
 import {
   sendMessageToConversation,
