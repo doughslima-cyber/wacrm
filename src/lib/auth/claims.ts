@@ -1,4 +1,4 @@
-// Server-only: the `accountIds` custom claim.
+// Server-only: the `accountIds` and `userId` custom claims.
 //
 // Storage and Firestore rules can't query Postgres, so the accounts a
 // user belongs to ride in their Firebase ID token as a custom claim
@@ -6,6 +6,10 @@
 // truth: this copies profiles.account_id into the claim whenever it
 // may have changed — at sign-in, after redeeming an invitation, after
 // being removed from an account.
+//
+// `userId` is the user's auth.users uuid, which is not the Firebase
+// UID. storage.rules match it against the avatar folder
+// (avatars/<uuid>/…, the path convention of migration 008).
 //
 // A claim change only reaches a browser when its ID token is next
 // refreshed (≤ 1h, or at once when it forces a refresh).
@@ -32,16 +36,16 @@ function sameIds(a: unknown, b: string[]): boolean {
   return Array.isArray(a) && a.length === b.length && a.every((id, i) => id === b[i]);
 }
 
-/** Writes the claim when it differs. Returns whether it changed. */
+/** Writes the claims when they differ. Returns whether they changed. */
 export async function syncAccountClaims(firebaseUid: string, userId: string): Promise<boolean> {
   const accountIds = await accountIdsOf(userId);
   // Compare against the live record, not the revocation cache, so a
   // claim another instance wrote a moment ago isn't missed.
   forgetFirebaseUser(firebaseUid);
   const current = (await firebaseUserState(firebaseUid))?.customClaims ?? {};
-  if (sameIds(current.accountIds, accountIds)) return false;
+  if (sameIds(current.accountIds, accountIds) && current.userId === userId) return false;
 
-  const next = { ...current, accountIds };
+  const next = { ...current, accountIds, userId };
   await firebaseAuth().setCustomUserClaims(firebaseUid, next);
   rememberCustomClaims(firebaseUid, next);
   return true;

@@ -29,7 +29,7 @@ const EMAIL_LOCALE: Record<string, string> = {
 
 let auth: Auth | undefined;
 
-function firebaseApp(): FirebaseApp {
+export function firebaseApp(): FirebaseApp {
   return (
     getApps()[0] ??
     initializeApp({
@@ -38,6 +38,7 @@ function firebaseApp(): FirebaseApp {
         process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ??
         `${process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID}.firebaseapp.com`,
       projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+      storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
       appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
     })
   );
