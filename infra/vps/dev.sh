@@ -111,12 +111,27 @@ REMOTE
     # VPS kills ssh with 255); Ctrl+C ends it. The wait doubles up to 30s
     # while reconnecting fails, and starts over after a connection that
     # held for a minute.
-    trap 'echo; echo "tunnel closed"; exit 0' INT TERM
+    #
+    # ssh runs as a background child the script waits on: bash defers a
+    # trap until a foreground command returns, so a SIGTERM to this
+    # script (a task runner, `kill`) would otherwise leave ssh running.
+    # `wait` returns as soon as a trapped signal arrives, and the trap
+    # takes ssh down with it.
+    child=
+    close_tunnel() {
+      [[ -n "$child" ]] && kill "$child" 2>/dev/null && wait "$child" 2>/dev/null
+      echo; echo "tunnel closed"
+      exit 0
+    }
+    trap close_tunnel INT TERM
     delay=2
     while true; do
       echo "tunnel open: PostgREST on localhost:${PGRST_PORT}, Postgres on localhost:${DB_PORT} (Ctrl+C to close)"
       started=$(date +%s)
-      ssh "${TUNNEL[@]}" || true
+      ssh "${TUNNEL[@]}" &
+      child=$!
+      wait "$child" || true
+      child=
       (( $(date +%s) - started >= 60 )) && delay=2
       echo "tunnel dropped at $(date +%H:%M:%S); reconnecting in ${delay}s" >&2
       sleep "$delay"
