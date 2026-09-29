@@ -2,7 +2,7 @@
 //   1. infra/db/compat/*.sql     — Supabase stand-ins (roles, auth, storage)
 //   2. supabase/migrations/*.sql — upstream migrations, never edited
 //   3. infra/db/migrations/*.sql — our own additions (realtime notify, ...)
-// then runs supabase/ci/verify-schema.sql.
+// then runs supabase/ci/verify-schema.sql and infra/db/verify-rpc-grants.sql.
 //
 // Each file runs in its own transaction and is recorded in
 // supabase_migrations.schema_migrations, so re-running only applies
@@ -41,7 +41,10 @@ const SOURCES = [
   path.join(repoRoot, 'supabase', 'migrations'),
   path.join(here, 'migrations'),
 ]
-const VERIFY_FILE = path.join(repoRoot, 'supabase', 'ci', 'verify-schema.sql')
+const VERIFY_FILES = [
+  path.join(repoRoot, 'supabase', 'ci', 'verify-schema.sql'),
+  path.join(here, 'verify-rpc-grants.sql'),
+]
 
 const directUrl = process.env.DATABASE_URL
 const instance = directUrl ? null : required('INSTANCE_CONNECTION_NAME')
@@ -162,8 +165,10 @@ async function setLoginPasswords(db) {
 }
 
 async function verify(db) {
-  await db.query(await readFile(VERIFY_FILE, 'utf8'))
-  console.log('verify-schema.sql passed')
+  for (const file of VERIFY_FILES) {
+    await db.query(await readFile(file, 'utf8'))
+    console.log(`${path.basename(file)} passed`)
+  }
 }
 
 let db

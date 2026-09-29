@@ -14,7 +14,8 @@
     "storage:test-rules": "firebase emulators:exec --only storage --project demo-wacrm --config ../firebase.json \"node --test storage/rules.test.mjs\"",
     "storage:cors": "gcloud storage buckets update gs://crm-zap-cbd5d.firebasestorage.app --cors-file=storage/cors.json",
     "firestore:test-rules": "firebase emulators:exec --only firestore --project demo-wacrm --config ../firebase.json \"node --test firestore/rules.test.mjs\"",
-    "relay:test": "node --test relay-realtime/coalesce.test.mjs"
+    "relay:test": "node --test relay-realtime/coalesce.test.mjs",
+    "isolation:test": "node isolation/isolation.mjs"
   },
   "dependencies": {
     "@google-cloud/cloud-sql-connector": "^1.8.0",

@@ -779,15 +779,101 @@ containers rodam com usuários próprios (`nextjs`, `node`).
 
 ### Fase 6 — Validação (M)
 
-- [ ] Teste de isolamento: dois usuários em contas diferentes tentam ler e
+- [x] Teste de isolamento: dois usuários em contas diferentes tentam ler e
       escrever dados um do outro por `/api/rest`, `/api/*`, Storage e
-      Firestore. Tudo deve falhar.
+      Firestore. Tudo deve falhar. **328/328 no banco de dev**, depois da
+      migration 047 (abaixo). Ficaram 9 avisos, todos de código do upstream.
+- [ ] Migration 047 aplicada em `crm.dhscode.com.br` (vai no próximo
+      `infra/vps/deploy.sh`).
 - [ ] Roteiro manual: conectar WhatsApp → receber mensagem → responder com
       áudio → criar contato → mover no pipeline → broadcast → automação com
       Wait → flow → resposta de IA com base de conhecimento → API pública com
-      API key → MCP server.
-- [ ] Rodar `npm test`, `npm run typecheck` e `npm run build`.
+      API key → MCP server. Depende do App Secret real e do webhook do Meta
+      (pendências da Fase 5).
+- [x] Rodar `npm test`, `npm run typecheck` e `npm run build`. `typecheck` e
+      `build` passam. `npm test`: 1084/1089 nesta estação e verde no CI. As 5
+      falhas são de ambiente, em arquivos do upstream que a migração não
+      tocou: `date-utils.test.ts` assume fuso UTC (passa com `TZ=UTC`) e
+      `currency.test.ts` assume o locale `en-US` (o Node no Windows usa o
+      pt-BR do sistema e ignora `LANG`).
 - [ ] Revisar os custos no Billing depois de 48h de uso.
+
+**Teste de isolamento** (`cd infra && npm run isolation:test`, com o
+`npm run dev` no ar sobre a pilha de dev):
+
+- Três usuários fixos, `isolation-{a,b,c}@example.com`, criados na primeira
+  execução pela Identity Toolkit e pelo `/api/auth/session` do próprio app
+  (que cria `auth.users`, perfil e conta). A senha é trocada a cada rodada,
+  então nada secreto fica guardado. Use só contra o banco de dev.
+- A semeia a conta dele como o app faz: `/api/rest` para contato, tag,
+  pipeline, etapa, deal, conversa, mensagem, reação, nota, campo
+  customizado, template e broadcast; as rotas do servidor para quick reply,
+  automação, flow, documento de conhecimento, API key, convite e webhook
+  (`/api/v1`).
+- B ataca por todas as portas: `GET`/`PATCH`/`DELETE` por id e `INSERT` com
+  o `account_id` de A em cada tabela; varredura de todas as 36 tabelas como
+  B e como anônimo; o proxy (header `Authorization` forjado com
+  `service_role`, cookie inválido, path traversal, escrita cross-origin); 28
+  chamadas a rotas `/api/*` com ids de A; a API pública com a API key de B;
+  as RPCs `SECURITY DEFINER`; Storage (gravar, sobrescrever, apagar e listar
+  a pasta de A nos três prefixos); Firestore (ler os sinais de A, gravar
+  sinais).
+- Cada "B não vê nada" tem um controle: a mesma consulta feita por A
+  encontra a linha. No fim, as linhas de A são comparadas com um snapshot
+  tirado antes dos ataques. Esse é o veredito para as rotas que respondem
+  200 a um id alheio sem fazer nada (knowledge `DELETE`, quick replies,
+  automações `DELETE`, engine).
+- Por último, B sai de todas as sessões (`?scope=global`), e o cookie
+  antigo passa a dar 401 em `/api/rest` e nas rotas.
+
+**Achado corrigido: RPCs sem checagem de quem chama.** Seis funções
+`SECURITY DEFINER` do upstream não verificam o chamador e estavam abertas
+em `/api/rest/rpc/*` até para anônimo, porque o compat reproduz o grant
+padrão do Supabase (`EXECUTE` para `anon` e `authenticated`) e as
+migrations do upstream só revogam de `PUBLIC`. O teste mostrou, sem
+sessão, que dava para desativar o webhook de outra conta
+(`record_webhook_failure`), consumir a cota de respostas de IA de uma
+conversa alheia (`claim_ai_reply_slot`) e alterar os contadores de um
+broadcast alheio (`_bcast_bump`, `recompute_broadcast_counts`), além de
+rodar as deduplicações de todas as contas. O mesmo buraco existe no
+upstream sobre o Supabase.
+
+- `infra/db/migrations/047_revoke_service_only_rpcs.sql` revoga `EXECUTE`
+  de `PUBLIC`, `anon` e `authenticated` nessas funções (e em
+  `_bcast_cols_for_status`). Quem as chama de verdade é código com service
+  role (`deliver.ts`, `auto-reply.ts`) ou um trigger `SECURITY DEFINER`,
+  então nada no app muda.
+- `infra/db/verify-rpc-grants.sql` roda no fim do `migrate.mjs` (local, CI
+  e VPS). Ele falha se alguma função `SECURITY DEFINER` de `public`, fora
+  de uma lista revisada (as que checam `auth.uid()` ou um token), ficar
+  chamável por `anon` ou `authenticated`. Um merge do upstream não abre
+  outra em silêncio. Antes da 047, ela acusou exatamente as seis.
+
+**Avisos: bugs do upstream, não corrigidos.** Não são regressão da
+migração (a RLS e as rotas são as mesmas do Supabase). Corrigir exige
+mexer em arquivos do upstream, o que fica para decidir:
+
+1. **Ex-membro mantém acesso às automações que criou.** As rotas
+   `/api/automations/[id]` (e `/duplicate`) filtram por `user_id`, não por
+   `account_id`. C entrou na conta de A, criou uma automação, foi removido
+   e continuou lendo (com a configuração dos passos), editando, duplicando
+   para dentro da conta de A e **apagando** a automação.
+2. **Motor de automações confia em `context.conversation_id`**
+   (`engine.ts`, `resolveConversationId`). Com um WhatsApp conectado, B
+   grava a mensagem enviada e atualiza `last_message_*` numa conversa de A.
+   O teste só confirma que nada chega enquanto B não tem número.
+3. **Atribuir uma conversa a um usuário de outra conta.** A RLS de
+   `conversations` não confere o `assigned_agent_id`, e o trigger
+   `notify_conversation_assigned` cria uma notificação para o usuário de
+   A, que ele enxerga.
+4. **Referências a linhas de outra conta.** As políticas só checam o
+   `account_id` da linha nova, então B cria na própria conta um deal com o
+   contato e a etapa de A, uma conversa com o contato de A ou marca um
+   contato seu com a tag de A. Não vaza leitura (o embed volta vazio), mas
+   o código com service role que seguir essas FKs pode.
+
+Os casos 2 a 4 exigem conhecer o uuid do registro de A, que não aparece
+para B em lugar nenhum. O caso 1 não: o ex-membro já tinha os ids.
 
 ## 5. Decisões para aprovar
 
