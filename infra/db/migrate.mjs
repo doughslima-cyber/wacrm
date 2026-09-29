@@ -14,6 +14,7 @@
 //   PGPASSWORD                password of the `postgres` user
 //   DB_NAME                   default: wacrm
 //   AUTHENTICATOR_PASSWORD    optional; sets the PostgREST login password
+//   RELAY_PASSWORD            optional; sets the realtime relay's login password
 //   GOOGLE_OAUTH_ACCESS_TOKEN optional; e.g. $(gcloud auth print-access-token)
 //                             on a workstation without Application Default
 //                             Credentials. Without it, ADC is used (CI).
@@ -136,11 +137,16 @@ async function migrate(db) {
   console.log(`${count} file(s) applied, ${applied.size} already present`)
 }
 
-async function setAuthenticatorPassword(db) {
-  const pw = process.env.AUTHENTICATOR_PASSWORD
-  if (!pw) return
-  await db.query(`ALTER ROLE authenticator PASSWORD ${pg.escapeLiteral(pw)}`)
-  console.log('authenticator password set')
+async function setLoginPasswords(db) {
+  for (const [role, envVar] of [
+    ['authenticator', 'AUTHENTICATOR_PASSWORD'],
+    ['realtime_relay', 'RELAY_PASSWORD'],
+  ]) {
+    const pw = process.env[envVar]
+    if (!pw) continue
+    await db.query(`ALTER ROLE ${pg.escapeIdentifier(role)} PASSWORD ${pg.escapeLiteral(pw)}`)
+    console.log(`${role} password set`)
+  }
 }
 
 async function verify(db) {
@@ -154,7 +160,7 @@ try {
   db = await connect(dbName)
   if (!verifyOnly) {
     await migrate(db)
-    await setAuthenticatorPassword(db)
+    await setLoginPasswords(db)
   }
   await verify(db)
 } catch (err) {

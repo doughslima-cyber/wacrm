@@ -129,7 +129,9 @@ export const pendingStorage: StorageClient = {
 };
 
 // ------------------------------------------------------------------
-// Realtime (Firestore signals land in phase 4)
+// Realtime: Firestore signals + a fetch of the changed row, behind the
+// supabase-js channel API (src/lib/realtime/hub.ts). Only the browser
+// client has a transport; elsewhere a channel never fires.
 // ------------------------------------------------------------------
 
 export type RealtimeStatus = "SUBSCRIBED" | "TIMED_OUT" | "CLOSED" | "CHANNEL_ERROR";
@@ -153,11 +155,18 @@ export interface PostgresChangesFilter {
   filter?: string;
 }
 
+export type RealtimeStatusCallback = (status: RealtimeStatus, err?: Error) => void;
+
+/** Delivers changes to subscribed channels. `join` returns the leave function. */
+export interface RealtimeTransport {
+  join(channel: RealtimeChannel, onStatus: RealtimeStatusCallback): () => void;
+}
+
 /**
- * Same surface as supabase-js's channel for `postgres_changes`. Until
- * the phase 4 transport exists it records its listeners and never
- * fires, and `subscribe` never reports SUBSCRIBED — screens load their
- * data normally, they just don't update live yet.
+ * Same surface as supabase-js's channel for `postgres_changes`:
+ * `.on(...)` registers listeners, `.subscribe(cb)` starts delivery and
+ * reports status, `removeChannel` stops it. Without a transport it
+ * records its listeners and never fires.
  */
 export class RealtimeChannel {
   readonly listeners: Array<{
@@ -165,7 +174,12 @@ export class RealtimeChannel {
     callback: (payload: RealtimePostgresChangesPayload) => void;
   }> = [];
 
-  constructor(readonly topic: string) {}
+  private leave: (() => void) | null = null;
+
+  constructor(
+    readonly topic: string,
+    private readonly transport?: RealtimeTransport,
+  ) {}
 
   on(
     _type: "postgres_changes",
@@ -176,11 +190,16 @@ export class RealtimeChannel {
     return this;
   }
 
-  subscribe(_callback?: (status: RealtimeStatus, err?: Error) => void): this {
+  subscribe(callback?: RealtimeStatusCallback): this {
+    if (this.transport && !this.leave) {
+      this.leave = this.transport.join(this, (status, err) => callback?.(status, err));
+    }
     return this;
   }
 
   async unsubscribe(): Promise<"ok"> {
+    this.leave?.();
+    this.leave = null;
     this.listeners.length = 0;
     return "ok";
   }
@@ -196,21 +215,24 @@ export interface AppClientOptions {
   fetch?: Fetch;
   auth: AuthClient;
   storage?: StorageClient;
+  realtime?: RealtimeTransport;
 }
 
 export class AppClient extends PostgrestClient {
   readonly auth: AuthClient;
   readonly storage: StorageClient;
   private readonly channels = new Set<RealtimeChannel>();
+  private readonly realtime?: RealtimeTransport;
 
   constructor(url: string, options: AppClientOptions) {
     super(url, { fetch: options.fetch });
     this.auth = options.auth;
     this.storage = options.storage ?? pendingStorage;
+    this.realtime = options.realtime;
   }
 
   channel(name: string): RealtimeChannel {
-    const channel = new RealtimeChannel(name);
+    const channel = new RealtimeChannel(name, this.realtime);
     this.channels.add(channel);
     return channel;
   }

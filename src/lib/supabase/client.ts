@@ -3,6 +3,7 @@ import {
   AppClient,
   type AuthChangeEvent,
   type AuthClient,
+  type RealtimeTransport,
   type Session,
   type StorageClient,
   type User,
@@ -26,8 +27,36 @@ export function createClient(): AppClient {
   browserClient = new AppClient(`${window.location.origin}/api/rest`, {
     auth: browserAuth(),
     storage: browserStorage,
+    realtime: browserRealtime,
   })
   return browserClient
+}
+
+// ------------------------------------------------------------------
+// Realtime: `channel().on('postgres_changes', …)` is served by Firestore
+// signals plus a fetch of the row through /api/rest
+// (src/lib/firebase/realtime.ts, loaded on the first subscribe).
+// ------------------------------------------------------------------
+
+const realtimeOps = () => import('@/lib/firebase/realtime')
+
+const browserRealtime: RealtimeTransport = {
+  join(channel, onStatus) {
+    let leave: (() => void) | null = null
+    let left = false
+    realtimeOps().then(
+      (ops) => {
+        if (!left) leave = ops.join(createClient(), channel, onStatus)
+      },
+      (err) => {
+        if (!left) onStatus('CHANNEL_ERROR', err instanceof Error ? err : new Error(String(err)))
+      },
+    )
+    return () => {
+      left = true
+      leave?.()
+    }
+  },
 }
 
 // ------------------------------------------------------------------
