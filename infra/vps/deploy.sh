@@ -85,7 +85,9 @@ fi
 compose() { docker compose -f infra/vps/compose.yml "$@"; }
 compose build --quiet app relay
 compose up -d --wait db
-compose --profile migrate run --rm migrate
+# -T and </dev/null: this script arrives on ssh's stdin, and `run`
+# would otherwise read the rest of it as the container's input.
+compose --profile migrate run --rm -T migrate </dev/null
 compose up -d db postgrest
 
 # The app and the relay mount the key; a missing file would be mounted
