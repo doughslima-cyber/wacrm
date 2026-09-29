@@ -102,20 +102,34 @@ coluna do schema muda de tipo.
 ### 3.4 Realtime
 
 Os hooks assinam `postgres_changes` em `messages`, `conversations`,
-`message_reactions`, `flow_runs`, `member_presence` e `notifications`.
+`message_reactions`, `member_presence` e `notifications` (o upstream também
+publica `flow_runs`, mas nada no app assina essa tabela).
 
-- Um trigger `AFTER INSERT/UPDATE/DELETE` nessas 6 tabelas chama
-  `pg_notify('changes', {table, op, id, account_id})`. Isso cobre qualquer
-  caminho de escrita (webhook, automações, UI) sem mexer neles.
-- O `relay-realtime` (Node, Cloud Run, `min-instances=1`) faz `LISTEN` e grava
-  um **sinal**, não a linha inteira, em
-  `signals/{account_id}/tables/{table}`.
-- O cliente assina esse doc com `onSnapshot` e busca a linha nova via
-  `/api/rest`. O conteúdo das mensagens nunca sai do Postgres.
+- Um trigger `AFTER INSERT/UPDATE/DELETE` nessas 5 tabelas grava uma linha
+  pequena em `app_realtime.changes` (tabela, op, chave primária, as colunas
+  que os filtros usam e `account_id`, nunca o conteúdo) e chama
+  `pg_notify('app_realtime', '')`. Isso cobre qualquer caminho de escrita
+  (webhook, automações, UI) sem mexer neles.
+- O log, e não o NOTIFY, é a fonte da verdade: um NOTIFY enviado com o relay
+  desconectado se perde, a linha no log não.
+- O `relay-realtime` (Node, Cloud Run, 1 instância com CPU sempre alocada)
+  faz `LISTEN`, lê as linhas não publicadas em ordem (`FOR UPDATE SKIP
+  LOCKED`), agrupa várias mudanças da mesma linha num lote e grava **um
+  documento por mudança** em `signals/{account_id}/changes/{seq}`. Um
+  documento único por tabela não serviria: o `onSnapshot` entrega só o
+  estado mais recente de um documento, então duas mensagens seguidas
+  virariam uma. Os documentos expiram por TTL (`expireAt`, 1h).
+- O cliente assina `signals/{conta}/changes` com `onSnapshot` e busca a
+  linha nova via `/api/rest`. O conteúdo das mensagens nunca sai do
+  Postgres, e a RLS decide o que cada usuário recebe.
 - As Security Rules do Firestore só permitem ler `signals/{accountId}` a quem
   tem `accountId` nas custom claims. O proxy de sessão grava essas claims.
-- Um wrapper `channel()` imita a API do supabase-js, para os 7 pontos de uso
-  mudarem o mínimo possível.
+- Se o Firestore ficar 60s calado, o browser lê o próprio
+  log (RPC `realtime_changes_since`). Se achar mudança que o relay não
+  entregou, passa a fazer polling a cada 5s até o relay voltar. O mesmo
+  polling cobre quem está sem login no SDK do Firebase ou sem a claim.
+- O `channel()` do cliente do browser mantém a API do supabase-js, e os
+  7 pontos de uso não mudaram.
 
 ## 4. Fases
 
@@ -538,20 +552,102 @@ Como ficou:
 
 ### Fase 4 — Realtime (G)
 
-- [ ] Migration nova `infra/db/migrations/045_realtime_notify.sql` com o trigger `pg_notify` nas 6
-      tabelas.
-- [ ] Serviço `relay-realtime/` (Node, Cloud Run, `min-instances=1`): `LISTEN`,
-      reconexão com backoff e escrita dos sinais no Firestore.
-- [ ] `firestore.rules`: leitura de `signals/{accountId}/**` por membros,
-      escrita bloqueada para clientes.
-- [ ] Wrapper `channel()` e adaptação de `use-realtime.ts`,
-      `use-total-unread.ts`, `use-unread-notifications.ts`,
-      `use-browser-notifications.ts`, `use-presence.ts`,
-      `components/inbox/message-thread.tsx` e `notifications/page.tsx`.
-- [ ] Fallback: se o sinal ficar 60s parado com a aba ativa, fazer polling.
+- [x] Migration nova `infra/db/migrations/045_realtime_notify.sql`: log
+      `app_realtime.changes`, trigger nas 5 tabelas, `pg_notify`, papel
+      `realtime_relay` e a RPC `realtime_changes_since` do polling.
+- [x] Serviço `infra/relay-realtime/` (Node, Cloud Run, 1 instância):
+      `LISTEN`, reconexão com backoff e escrita dos sinais no Firestore.
+- [x] `firestore.rules`: leitura de `signals/{accountId}/changes/*` por
+      membros, escrita bloqueada para clientes.
+- [x] Wrapper `channel()`. `use-realtime.ts`, `use-total-unread.ts`,
+      `use-unread-notifications.ts`, `use-browser-notifications.ts`,
+      `use-presence.ts`, `components/inbox/message-thread.tsx` e
+      `notifications/page.tsx` não precisaram de mudança.
+- [x] Fallback: se o sinal ficar 60s parado, fazer polling. Vale também
+      para aba oculta, onde as notificações do navegador são disparadas.
 
 **Critério de saída:** mensagem enviada pelo webhook aparece na inbox aberta em
 menos de 2s, e a presença de outro membro atualiza.
+
+**Resultado (2026-09-28): aprovado.**
+
+Aplicado no projeto: secret `pg-relay-password`, migration 045 (com a senha
+do `realtime_relay`), `firestore.rules`, service account `relay-realtime`
+(`cloudsql.client`, `datastore.user`, acesso ao secret), TTL de `expireAt`
+e o Cloud Run `relay-realtime`. O deploy pelo código criou o repositório
+`cloud-run-source-deploy` no Artifact Registry.
+
+A `046_realtime_notification_read_at.sql`, que veio da revisão do PR, também
+foi aplicada. Conferido com duas notificações de B, uma lida e outra não:
+apagar o contato leva as duas embora em cascata, e os sinais de DELETE
+trazem `read_at` com a data e com `null`. O mesmo teste mostra a conversa
+apagada virando um único sinal, sem um por mensagem.
+
+Roteiro com `npm run dev` contra o Cloud SQL, o Firebase e o relay no Cloud
+Run, com dois usuários novos (A e B) verificados pela Admin API. A entrou
+pela tela `/login` em `a.localhost:3000` (subdomínio de `localhost`: outra
+origem, cookies próprios, e o dev server do Next aceita sem
+`allowedDevOrigins`). B entrou por script e aceitou um convite de A como
+agente.
+
+- Na aba de A, o hub abre o `Listen` do Firestore e não cai no polling: as
+  regras aceitaram a claim `accountIds`.
+- Presença: B manda `touch_presence('online')`. Na tela de membros de A,
+  "0 online" vira "1 online" em **0,41 s**, sem recarregar, pela busca
+  `member_presence?user_id=in.(…)` do hub.
+- Webhook: uma mensagem de cliente assinada com o `META_APP_SECRET`, num
+  `whatsapp_config` de teste (token falso), aparece na inbox aberta de A em
+  **1,41 s** após o envio (0,67 s após o ack), já contando a criação do
+  contato e da conversa.
+- Relay parado (`DB_NAME` inexistente numa revisão nova): ele registra o
+  erro e tenta reconectar com backoff. Com a aba oculta, uma mensagem nova
+  chega pelo polling em 48 s, quando o Firestore completa 60 s calado.
+  Esse teste mostrou que o watchdog não podia depender da aba visível.
+- Relay de volta: ele publica o que ficou pendente, e a mensagem seguinte
+  aparece em **0,67 s**. As 4 mensagens aparecem uma vez cada no histórico.
+- Sem erro no console nem no servidor.
+
+Ficaram no projeto: os usuários `p4-a-…@example.com` e `p4-b-…@example.com`
+(B como agente na conta de A), o `whatsapp_config` de teste
+(`phone_number_id` 990004000400040) e a conversa "Cliente Fase 4" com as
+4 mensagens.
+
+Como ficou:
+
+- `src/lib/supabase/app-client.ts`: o `RealtimeChannel` recebe um
+  transporte (`RealtimeTransport`). Só o cliente do browser tem um
+  (`src/lib/supabase/client.ts`), que carrega `src/lib/firebase/realtime.ts`
+  no primeiro `subscribe`. No servidor, o canal continua sem disparar.
+- `src/lib/realtime/hub.ts`: um hub por aba, compartilhado por todos os
+  canais. Ele junta as duas fontes (Firestore e polling), descarta
+  mudanças repetidas pelo id, busca as linhas por tabela em lote
+  (`?id=in.(…)`, 100 por vez) e entrega na ordem das mudanças. Uma linha
+  que a RLS não devolve é descartada, como acontecia no Supabase com
+  notificações de outro membro. Se a busca falha, o sinal volta para a
+  fila (1s, 2s, 4s); esgotadas as tentativas, o id fica livre para o
+  polling do log e os canais recebem `CHANNEL_ERROR` → `SUBSCRIBED`. O hub
+  para 10s depois que o último canal sai.
+- Status igual ao supabase-js: `SUBSCRIBED` quando há uma fonte ativa e
+  `CHANNEL_ERROR` quando não há. Uma busca de linha que falha gera
+  `CHANNEL_ERROR` → `SUBSCRIBED`, a transição que faz a inbox recarregar.
+- `src/lib/realtime/changes.ts`: filtros `eq`, `neq` e `in` (o app só usa
+  `eq`). Filtro em coluna-chave (`conversation_id`, `account_id`) é
+  decidido antes da busca, então reações de outra conversa nem são
+  buscadas. `DELETE` traz só as chaves em `old`, como a replica identity
+  padrão do Supabase. Para notificações, as chaves do `DELETE` incluem
+  `read_at` (`046_realtime_notification_read_at.sql`), que o
+  `useUnreadNotifications` usa para decidir se o contador cai.
+- O relay publica as mudanças e marca as linhas na mesma transação. Se cair
+  entre as duas coisas, repete a escrita (mesmo id de documento), mas não
+  pula nenhuma. Linhas com mais de 10 min quando o relay volta são marcadas
+  sem sinal (as abas já as leram pelo polling), e as publicadas somem do
+  log depois de 1h.
+- Testes: `changes.test.ts` e `hub.test.ts` (26), `coalesce.test.mjs`
+  (`cd infra && npm run relay:test`, 10) e `infra/firestore/rules.test.mjs`
+  no emulador (`npm run firestore:test-rules`, 6/6). As regras de Storage
+  continuam 18/18 com o `firebase.json` novo. No app, `npm run typecheck`
+  passa, o lint não dá erro e `npm test` tem 1082/1087: as mesmas 5 falhas
+  de fuso/ICU.
 
 ### Fase 5 — Deploy (M)
 
@@ -605,7 +701,7 @@ São decisões difíceis de reverter depois que a Fase 1 começar.
 2. **Tabela `auth.users` com uuid própria**, com o UID do Firebase numa coluna
    à parte.
 3. **Realtime por sinais no Firestore** (só IDs, sem conteúdo) alimentados por
-   `pg_notify`.
+   um log no Postgres + `pg_notify`.
 4. **Tudo em `southamerica-east1`**: Cloud SQL, PostgREST, relay e o Next no
    Cloud Run. O App Hosting ficou de fora porque não existe nessa região
    (decidido em 2026-09-28).
