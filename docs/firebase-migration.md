@@ -577,8 +577,11 @@ do `realtime_relay`), `firestore.rules`, service account `relay-realtime`
 e o Cloud Run `relay-realtime`. O deploy pelo código criou o repositório
 `cloud-run-source-deploy` no Artifact Registry.
 
-**Pendente:** aplicar a `046_realtime_notification_read_at.sql`
-(`cd infra && npm run db:migrate`), que veio da revisão do PR.
+A `046_realtime_notification_read_at.sql`, que veio da revisão do PR, também
+foi aplicada. Conferido com duas notificações de B, uma lida e outra não:
+apagar o contato leva as duas embora em cascata, e os sinais de DELETE
+trazem `read_at` com a data e com `null`. O mesmo teste mostra a conversa
+apagada virando um único sinal, sem um por mensagem.
 
 Roteiro com `npm run dev` contra o Cloud SQL, o Firebase e o relay no Cloud
 Run, com dois usuários novos (A e B) verificados pela Admin API. A entrou
