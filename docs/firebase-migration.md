@@ -1,8 +1,10 @@
 # Migração Supabase → Firebase / Google Cloud
 
-Status: **proposta — aguardando aprovação**
+Status: **em execução** — fases 0 a 5 concluídas; fase 6 (validação) com o
+teste de isolamento e as correções no ar, faltando o roteiro manual e o
+Billing
 Projeto Firebase de destino: `crm-zap-cbd5d`
-Data: 2026-09-28
+Data: 2026-09-28 · atualizado em 2026-09-29
 
 ## 1. Objetivo e premissas
 
@@ -685,10 +687,10 @@ Postgres padrão com a camada de compat, e o app não muda.
       do `config.yml` ao lado dele). `/login` responde 200 pelo domínio,
       o Cloudflare não guarda HTML (`cf-cache-status: DYNAMIC`) e os outros
       subdomínios do túnel continuam no ar.
-- [ ] Domínio `crm.dhscode.com.br` nos domínios autorizados do Firebase
+- [x] Domínio `crm.dhscode.com.br` nos domínios autorizados do Firebase
       Auth: `cd infra && SITE_URL=https://crm.dhscode.com.br npm run auth:configure`.
       Sem isso, o email de verificação do cadastro falha (continue URL não
-      autorizada).
+      autorizada). Conferido na config do projeto em 2026-09-29.
 - [ ] URL de ação dos emails → `https://crm.dhscode.com.br/auth/action`,
       pelo console (Authentication → Templates → editar → "Personalizar URL
       de ação"). A API recusa essa mudança (`EMAIL_TEMPLATE_UPDATE_NOT_ALLOWED`)
@@ -789,19 +791,21 @@ containers rodam com usuários próprios (`nextjs`, `node`).
       correções abaixo (migrations 047 e 048, rotas de automação e motor).
 - [x] Migration 047 aplicada em `crm.dhscode.com.br` (2026-09-29): a RPC
       anônima agora responde `42501 permission denied`.
-- [ ] Migration 048 e as correções de código em `crm.dhscode.com.br` (vão
-      no próximo `infra/vps/deploy.sh`).
+- [x] Migration 048 e as correções de código em `crm.dhscode.com.br`
+      (2026-09-29, deploy da `main` em `c926882`): verificações de schema e
+      de RPCs passando, app e relay reiniciados sem erro.
 - [ ] Roteiro manual: conectar WhatsApp → receber mensagem → responder com
       áudio → criar contato → mover no pipeline → broadcast → automação com
       Wait → flow → resposta de IA com base de conhecimento → API pública com
       API key → MCP server. Depende do App Secret real e do webhook do Meta
       (pendências da Fase 5).
-- [x] Rodar `npm test`, `npm run typecheck` e `npm run build`. `typecheck` e
-      `build` passam. `npm test`: 1084/1089 nesta estação e verde no CI. As 5
-      falhas são de ambiente, em arquivos do upstream que a migração não
-      tocou: `date-utils.test.ts` assume fuso UTC (passa com `TZ=UTC`) e
-      `currency.test.ts` assume o locale `en-US` (o Node no Windows usa o
-      pt-BR do sistema e ignora `LANG`).
+- [x] Rodar `npm test`, `npm run typecheck` e `npm run build`: tudo passa,
+      `npm test` com 1091/1091 também nesta estação. Os testes do upstream
+      assumem o ambiente do CI (fuso UTC, locale `en-US`); no Windows em
+      pt-BR, 5 falhavam. O `vitest.config.ts` agora fixa `TZ=UTC`, e o
+      `vitest.setup.ts` fixa `en-US` como locale padrão das chamadas que
+      não passam nenhum (o Node no Windows ignora `LANG`). Os arquivos de
+      teste do upstream não mudaram.
 - [ ] Revisar os custos no Billing depois de 48h de uso.
 
 **Teste de isolamento** (`cd infra && npm run isolation:test`, com o
