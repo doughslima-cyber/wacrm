@@ -651,35 +651,92 @@ Como ficou:
 
 ### Fase 5 — Deploy (M)
 
-Segue a skill `firebase-ship`: pré-checagem antes de qualquer deploy.
+**Mudança de rota (2026-09-29): enquanto o projeto está em testes, o
+deploy vai para a VPS da Oracle, e não para o Cloud Run.** O plano original
+(Next no Cloud Run atrás do Firebase Hosting, Cloud Build, Cloud Scheduler)
+custaria ~US$ 62/mês só com o `wacrm-web`: o webhook e o broadcast rodam em
+`after()`, o que obriga a CPU sempre alocada, e o cron de automações a cada
+minuto não deixa a instância desligar. Somando o relay (~US$ 59/mês com
+1 vCPU sempre ligada) e o Cloud SQL (~US$ 15/mês), seriam mais de US$ 130 por
+mês para um ambiente de testes. A VPS (`VM.Standard.A1.Flex`, 4 OCPU ARM,
+24 GB, `sa-saopaulo-1`) já está paga.
 
-- [ ] Build com Cloud Build a partir do `Dockerfile` (Node 22, `NEXT_PUBLIC_*`
-      como build args) e deploy no Cloud Run `wacrm-web` em
-      `southamerica-east1`, com secrets do Secret Manager no runtime
-      (`ENCRYPTION_KEY`, `META_APP_SECRET`, segredo do JWT do PostgREST,
-      `AUTOMATION_CRON_SECRET`).
-- [ ] `firebase.json`: Hosting com rewrite de `**` para o Cloud Run
-      `wacrm-web`. Conferir se o CDN do Hosting não guarda HTML por usuário,
-      porque o `next.config.ts` manda `s-maxage=300` nas páginas.
-- [ ] Trigger do Cloud Build no push para `main`.
-- [ ] `engines.node` em `package.json` fixado em `22`.
-- [ ] `roles/firebaseauth.admin` para a service account `wacrm-web` (criar
-      session cookies, checar revogação, custom claims).
-- [ ] `cd infra && SITE_URL=<url pública> npm run auth:configure`: URL de ação
-      dos emails → `/auth/action` e domínio autorizado.
-- [ ] `NEXT_PUBLIC_FIREBASE_API_KEY`, `NEXT_PUBLIC_FIREBASE_APP_ID` e
-      `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET` como build args.
-- [ ] Tirar `NEXT_PUBLIC_SUPABASE_*` e `SUPABASE_SERVICE_ROLE_KEY` do
-      `Dockerfile`, do `docker-compose.yml` e da CI. O `.env.local.example`
-      já foi atualizado na Fase 1.
-- [ ] Cloud Scheduler chamando `/api/automations/cron` e `/api/flows/cron` com
-      o secret.
-- [ ] Apontar o webhook do Meta para a URL do App Hosting e configurar
-      `NEXT_PUBLIC_SITE_URL`.
-- [ ] Ajustar `.github/workflows/migrations.yml` para aplicar compat +
-      migrations no Cloud SQL.
-- [ ] Deploy na ordem: regras (Firestore/Storage) → migrations → PostgREST →
-      relay → Cloud Run `wacrm-web` → Hosting.
+Fica no Google o que é gratuito no volume de testes: Firebase Auth,
+Storage e Firestore (sinais). Postgres, PostgREST, relay, Next e os crons
+rodam na VPS. Quando o projeto sair dos testes, o banco vai para um
+Postgres gerenciado com `pg_dump`/`pg_restore` e troca de variáveis: é
+Postgres padrão com a camada de compat, e o app não muda.
+
+- [x] `Dockerfile` em Node 22, com os `NEXT_PUBLIC_FIREBASE_*` como build
+      args. Os `NEXT_PUBLIC_SUPABASE_*` saíram do `Dockerfile`, do
+      `docker-compose.yml` e da CI.
+- [x] `engines.node` = `22.x`.
+- [x] `.github/workflows/migrations.yml` reaplica compat + migrations num
+      Postgres 17 + pgvector limpo, com o mesmo `migrate.mjs` do deploy.
+- [x] `infra/vps/compose.yml` e `infra/vps/deploy.sh`.
+- [x] Relay do Cloud Run com `min-instances=0` (o realtime da UI publicada
+      no Cloud Run, se houver, cai no polling).
+- [ ] Service account `wacrm-vps` e a chave dela na VPS (passo manual,
+      abaixo).
+- [ ] `crm.dhscode.com.br` no túnel Cloudflare `meu-servidor`.
+- [ ] `cd infra && SITE_URL=https://crm.dhscode.com.br npm run auth:configure`:
+      URL de ação dos emails e domínio autorizado.
+- [ ] App Secret real no `META_APP_SECRET` e webhook do Meta →
+      `https://crm.dhscode.com.br/api/whatsapp/webhook`.
+- [ ] Depois de validar a VPS: apagar o Cloud SQL `wacrm-pg` e os Cloud Run
+      `postgrest` e `relay-realtime`.
+
+Como ficou:
+
+- `infra/vps/compose.yml`: `db` (pgvector/pgvector:pg17, sem porta
+  publicada), `migrate` (perfil à parte, roda o `migrate.mjs` com
+  `DATABASE_URL`), `postgrest` (v16.3, as mesmas variáveis do Cloud Run),
+  `relay` (o mesmo `relay.mjs`, que ganhou `DB_HOST` para falar direto com
+  o Postgres), `app` (o `Dockerfile` da raiz, em `127.0.0.1:3100`) e `cron`
+  (um loop de `curl`: `/api/automations/cron` a cada minuto e
+  `/api/flows/cron` a cada 5). Todas as imagens têm build ARM64.
+- Sem IAM na frente do PostgREST: só a rede do compose chega nele. O
+  `postgrest.ts` já tratava esse caso (sem `K_SERVICE` e sem
+  `POSTGREST_ID_TOKEN_COMMAND`, não manda token do Google). O JWT de 60s e
+  a RLS continuam iguais.
+- `infra/vps/deploy.sh` roda da estação de trabalho: clona ou atualiza o
+  repositório em `~/wacrm` no branch já publicado, cria
+  `infra/vps/.env` (chmod 600) na primeira vez, com os secrets **gerados na
+  própria VPS**, faz o build, aplica as migrations e sobe os serviços. O
+  `META_APP_SECRET` nasce como placeholder, e todo webhook é recusado até
+  entrar o App Secret real.
+- `.dockerignore` passou a excluir `**/.env*` e `infra/`: o `.env` da VPS
+  não entra no contexto de build do app.
+- HTTPS: o túnel Cloudflare que a VPS já usa para os outros subdomínios
+  (`meu-servidor`). Ele cria o DNS e termina o TLS, sem porta nova aberta.
+- Os arquivos do caminho Cloud Run (Cloud Build, Hosting, deploy por
+  GitHub Actions com Workload Identity) foram escritos e depois removidos
+  neste mesmo branch. O que se aprendeu com eles está acima: `after()`
+  exige CPU sempre alocada, e o CDN do Hosting põe o `__session` na chave
+  do cache, então o `s-maxage=300` do `next.config.ts` não vazaria HTML
+  entre usuários.
+
+**Passo manual: service account da VPS.** A criação de service account,
+de papéis IAM e de chave precisa ser feita por você (PowerShell):
+
+```powershell
+$P="crm-zap-cbd5d"; $SA="wacrm-vps@$P.iam.gserviceaccount.com"
+gcloud iam service-accounts create wacrm-vps --project $P --display-name "WACRM on the Oracle VPS"
+gcloud projects add-iam-policy-binding $P --member "serviceAccount:$SA" --role roles/firebaseauth.admin --condition None
+gcloud projects add-iam-policy-binding $P --member "serviceAccount:$SA" --role roles/datastore.user --condition None
+gcloud storage buckets add-iam-policy-binding gs://crm-zap-cbd5d.firebasestorage.app --member "serviceAccount:$SA" --role roles/storage.objectAdmin
+gcloud iam service-accounts keys create "$env:TEMP\gcp-key.json" --iam-account $SA
+ssh servidor "mkdir -p -m 700 ~/.wacrm-secrets"
+scp "$env:TEMP\gcp-key.json" servidor:.wacrm-secrets/gcp-key.json
+ssh servidor "chmod 644 ~/.wacrm-secrets/gcp-key.json"
+Remove-Item "$env:TEMP\gcp-key.json"
+```
+
+`firebaseauth.admin` cria session cookies, checa revogação e grava custom
+claims; `datastore.user` é para o relay gravar os sinais; `objectAdmin`
+no bucket é para o espelho de mídia recebida. A pasta `0700` impede outros
+usuários do host de ler a chave. O arquivo fica `0644` porque os
+containers rodam com usuários próprios (`nextjs`, `node`).
 
 ### Fase 6 — Validação (M)
 
@@ -705,6 +762,9 @@ São decisões difíceis de reverter depois que a Fase 1 começar.
 4. **Tudo em `southamerica-east1`**: Cloud SQL, PostgREST, relay e o Next no
    Cloud Run. O App Hosting ficou de fora porque não existe nessa região
    (decidido em 2026-09-28).
+   **Revisto em 2026-09-29:** durante os testes, Postgres, PostgREST, relay
+   e Next rodam na VPS da Oracle em São Paulo (Fase 5). O Cloud Run volta a
+   ser opção quando houver volume que justifique o custo fixo.
 5. **As migrations do upstream nunca são editadas**: toda adaptação vai na
    camada `supabase/compat/` ou em migrations novas, numeradas depois das
    do upstream.

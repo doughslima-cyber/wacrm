@@ -1,0 +1,129 @@
+# WACRM on a single Linux host (docs/firebase-migration.md, phase 5).
+#
+#   db         Postgres 17 + pgvector; only reachable on the compose network
+#   migrate    one-shot: compat + supabase/migrations + infra/db/migrations
+#              (`docker compose --profile migrate run --rm migrate`)
+#   postgrest  PostgREST, same version and settings as the phase 0 spike
+#   relay      app_realtime.changes → Firestore signals (phase 4)
+#   app        the Next.js app, published on 127.0.0.1:${APP_PORT}; the
+#              Cloudflare tunnel on the host serves it over HTTPS
+#   cron       calls the two cron endpoints (automation Wait steps, the
+#              flow-run sweep)
+#
+# Config comes from infra/vps/.env on the host (never committed; see
+# deploy.sh, which creates it). Firebase Auth, Storage and Firestore stay
+# on Google: the app and the relay reach them with the service account
+# key at GCP_CREDENTIALS_FILE.
+name: wacrm
+
+x-google: &google
+  GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/gcp.json
+  GOOGLE_CLOUD_PROJECT: ${NEXT_PUBLIC_FIREBASE_PROJECT_ID:?}
+
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD', 'pg_isready', '-U', 'postgres']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  migrate:
+    image: node:22-alpine
+    profiles: [migrate]
+    working_dir: /repo/infra
+    volumes:
+      - ../..:/repo
+    command: ['sh', '-c', 'npm ci --no-audit --no-fund --loglevel=error && node db/migrate.mjs']
+    environment:
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@db:5432/postgres
+      AUTHENTICATOR_PASSWORD: ${AUTHENTICATOR_PASSWORD:?}
+      RELAY_PASSWORD: ${RELAY_PASSWORD:?}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  postgrest:
+    image: postgrest/postgrest:v16.3
+    restart: unless-stopped
+    environment:
+      PGRST_DB_URI: postgres://authenticator:${AUTHENTICATOR_PASSWORD}@db:5432/wacrm
+      PGRST_JWT_SECRET: ${POSTGREST_JWT_SECRET:?}
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_DB_EXTRA_SEARCH_PATH: public,extensions
+      PGRST_DB_MAX_ROWS: '1000'
+      PGRST_DB_POOL: '8'
+      PGRST_SERVER_PORT: '3000'
+      PGRST_LOG_LEVEL: warn
+    depends_on:
+      db:
+        condition: service_healthy
+
+  relay:
+    build: ../relay-realtime
+    restart: unless-stopped
+    environment:
+      <<: *google
+      DB_HOST: db
+      DB_PASSWORD: ${RELAY_PASSWORD:?}
+      FIRESTORE_PROJECT: ${NEXT_PUBLIC_FIREBASE_PROJECT_ID:?}
+    volumes:
+      - ${GCP_CREDENTIALS_FILE:?}:/run/secrets/gcp.json:ro
+    depends_on:
+      db:
+        condition: service_healthy
+
+  app:
+    build:
+      context: ../..
+      args:
+        NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${NEXT_PUBLIC_FIREBASE_PROJECT_ID:?}
+        NEXT_PUBLIC_FIREBASE_API_KEY: ${NEXT_PUBLIC_FIREBASE_API_KEY:?}
+        NEXT_PUBLIC_FIREBASE_APP_ID: ${NEXT_PUBLIC_FIREBASE_APP_ID:?}
+        NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: ${NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET:?}
+        NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:?}
+        NEXT_PUBLIC_APP_LOCALE: ${NEXT_PUBLIC_APP_LOCALE:-pt}
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:${APP_PORT:-3100}:3000'
+    environment:
+      <<: *google
+      POSTGREST_URL: http://postgrest:3000
+      POSTGREST_JWT_SECRET: ${POSTGREST_JWT_SECRET:?}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?}
+      META_APP_SECRET: ${META_APP_SECRET:?}
+      AUTOMATION_CRON_SECRET: ${AUTOMATION_CRON_SECRET:?}
+    volumes:
+      - ${GCP_CREDENTIALS_FILE:?}:/run/secrets/gcp.json:ro
+    depends_on:
+      - postgrest
+
+  cron:
+    image: curlimages/curl:8.16.0
+    restart: unless-stopped
+    environment:
+      AUTOMATION_CRON_SECRET: ${AUTOMATION_CRON_SECRET:?}
+    # Every minute: automation Wait steps resolve to the minute. Every
+    # 5 minutes: the flow sweep, which only times out runs abandoned
+    # for hours. `$$` is a literal `$` for the shell, not compose.
+    entrypoint: ['/bin/sh', '-c']
+    command:
+      - |
+        call() { curl -fsS -m 290 -o /dev/null -H "x-cron-secret: $$AUTOMATION_CRON_SECRET" "http://app:3000$$1" || echo "cron $$1 failed"; }
+        while true; do
+          call /api/automations/cron &
+          [ $$(( $$(date +%s) / 60 % 5 )) -eq 0 ] && call /api/flows/cron &
+          sleep 60
+        done
+    depends_on:
+      - app
+
+volumes:
+  db-data:

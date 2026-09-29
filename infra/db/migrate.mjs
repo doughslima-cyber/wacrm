@@ -12,6 +12,10 @@
 // Env:
 //   INSTANCE_CONNECTION_NAME  project:region:instance
 //   PGPASSWORD                password of the `postgres` user
+//   DATABASE_URL              instead of the two above: a plain
+//                             postgres:// URL (a superuser), for CI's
+//                             throwaway database. The path is ignored;
+//                             DB_NAME picks the database.
 //   DB_NAME                   default: wacrm
 //   AUTHENTICATOR_PASSWORD    optional; sets the PostgREST login password
 //   RELAY_PASSWORD            optional; sets the realtime relay's login password
@@ -39,8 +43,9 @@ const SOURCES = [
 ]
 const VERIFY_FILE = path.join(repoRoot, 'supabase', 'ci', 'verify-schema.sql')
 
-const instance = required('INSTANCE_CONNECTION_NAME')
-const password = required('PGPASSWORD')
+const directUrl = process.env.DATABASE_URL
+const instance = directUrl ? null : required('INSTANCE_CONNECTION_NAME')
+const password = directUrl ? null : required('PGPASSWORD')
 const dbName = process.env.DB_NAME || 'wacrm'
 const verifyOnly = process.argv.includes('--verify-only')
 
@@ -61,14 +66,21 @@ function connectorAuth() {
   return client
 }
 
-const connector = new Connector({ auth: connectorAuth() })
-const clientOpts = await connector.getOptions({
-  instanceConnectionName: instance,
-  ipType: 'PUBLIC',
-})
+const connector = directUrl ? null : new Connector({ auth: connectorAuth() })
+const clientOpts = connector
+  ? await connector.getOptions({ instanceConnectionName: instance, ipType: 'PUBLIC' })
+  : null
+
+function directConfig(database) {
+  const url = new URL(directUrl)
+  url.pathname = `/${database}`
+  return { connectionString: url.toString() }
+}
 
 async function connect(database) {
-  const client = new pg.Client({ ...clientOpts, user: 'postgres', password, database })
+  const client = new pg.Client(
+    connector ? { ...clientOpts, user: 'postgres', password, database } : directConfig(database),
+  )
   await client.connect()
   return client
 }
@@ -168,5 +180,5 @@ try {
   process.exitCode = 1
 } finally {
   await db?.end()
-  connector.close()
+  connector?.close()
 }
