@@ -18,6 +18,7 @@
 //   DEV_USER_EMAIL             e.g. dev@example.com
 //   DEV_USER_PASSWORD          at least 6 characters
 //   DEV_USER_NAME              optional full name for the profile
+//   DATABASE_URL, or
 //   INSTANCE_CONNECTION_NAME,
 //   PGPASSWORD,
 //   GOOGLE_OAUTH_ACCESS_TOKEN  same as db/migrate.mjs; the access token

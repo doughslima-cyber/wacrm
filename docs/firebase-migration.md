@@ -697,8 +697,13 @@ Postgres padrão com a camada de compat, e o app não muda.
       para o `continueUrl`.
 - [ ] App Secret real no `META_APP_SECRET` e webhook do Meta →
       `https://crm.dhscode.com.br/api/whatsapp/webhook`.
-- [ ] Depois de validar a VPS: apagar o Cloud SQL `wacrm-pg` e os Cloud Run
-      `postgrest` e `relay-realtime`.
+- [x] Cadastro → confirmação por email → login em `crm.dhscode.com.br`:
+      `auth.users`, perfil e conta criados, sem erro no app.
+- [x] Dev local sem instalar nada: `infra/vps/dev.sh` (abaixo).
+- [ ] Apagar o Cloud SQL `wacrm-pg`, os Cloud Run `postgrest` e
+      `relay-realtime`, os secrets `pg-*`/`pgrst-*`, as service accounts
+      `postgrest`, `relay-realtime` e `wacrm-web` e o repositório
+      `cloud-run-source-deploy` (aprovado, sem backup; comandos abaixo).
 
 Como ficou:
 
@@ -729,6 +734,26 @@ Como ficou:
   exige CPU sempre alocada, e o CDN do Hosting põe o `__session` na chave
   do cache, então o `s-maxage=300` do `next.config.ts` não vazaria HTML
   entre usuários.
+
+**Dev local.** Não há Docker nem Postgres na estação de trabalho, então o
+`npm run dev` usa uma segunda pilha na VPS (`infra/vps/compose.dev.yml`,
+projeto `wacrm-dev`): Postgres, PostgREST e relay próprios, com um banco
+separado do de testes, publicados só no loopback da VPS (3201 e 3202).
+
+1. `bash infra/vps/dev.sh up`: sobe a pilha, gera `infra/vps/.env.dev` na
+   VPS na primeira vez, aplica as migrations **desta cópia local** por um
+   túnel e grava `POSTGREST_URL`/`POSTGREST_JWT_SECRET` no `.env.local`.
+2. `bash infra/vps/dev.sh tunnel`, aberto enquanto o `npm run dev` roda.
+
+O `auth:dev-user` aceita `DATABASE_URL`
+(`postgres://postgres:…@localhost:3202/wacrm`) para criar um usuário
+verificado no banco de dev. O projeto Firebase é o mesmo nos dois
+ambientes, e as custom claims seguem o banco do último login. Use usuários
+diferentes para dev e para `crm.dhscode.com.br`.
+
+Validado: login pela tela em `localhost:3000` com um usuário criado assim,
+`/api/auth/session` com o uuid do banco de dev e `/api/rest/accounts` só
+com a conta dele, sem erro no console nem no servidor.
 
 **Passo manual: service account da VPS.** A criação de service account,
 de papéis IAM e de chave precisa ser feita por você (PowerShell):
