@@ -700,10 +700,13 @@ Postgres padrão com a camada de compat, e o app não muda.
 - [x] Cadastro → confirmação por email → login em `crm.dhscode.com.br`:
       `auth.users`, perfil e conta criados, sem erro no app.
 - [x] Dev local sem instalar nada: `infra/vps/dev.sh` (abaixo).
-- [ ] Apagar o Cloud SQL `wacrm-pg`, os Cloud Run `postgrest` e
-      `relay-realtime`, os secrets `pg-*`/`pgrst-*`, as service accounts
-      `postgrest`, `relay-realtime` e `wacrm-web` e o repositório
-      `cloud-run-source-deploy` (aprovado, sem backup; comandos abaixo).
+- [x] Apagados (2026-09-29, sem backup: só havia dados de teste) o Cloud
+      SQL `wacrm-pg`, os Cloud Run `postgrest` e `relay-realtime`, os
+      secrets `pg-*`/`pgrst-*`, as service accounts `postgrest`,
+      `relay-realtime` e `wacrm-web` e o repositório
+      `cloud-run-source-deploy`. No Google ficam Firebase Auth, Storage,
+      Firestore e a service account `wacrm-vps`; a VPS seguiu no ar sem
+      erro de permissão.
 
 Como ficou:
 
@@ -744,6 +747,7 @@ separado do de testes, publicados só no loopback da VPS (3201 e 3202).
    VPS na primeira vez, aplica as migrations **desta cópia local** por um
    túnel e grava `POSTGREST_URL`/`POSTGREST_JWT_SECRET` no `.env.local`.
 2. `bash infra/vps/dev.sh tunnel`, aberto enquanto o `npm run dev` roda.
+   Ele reconecta sozinho se a conexão cair (keepalive a cada 15s).
 
 O `auth:dev-user` aceita `DATABASE_URL`
 (`postgres://postgres:…@localhost:3202/wacrm`) para criar um usuário
