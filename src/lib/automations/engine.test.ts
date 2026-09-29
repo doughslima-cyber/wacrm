@@ -6,6 +6,7 @@ const h = vi.hoisted(() => ({
   state: {
     owned: null as { id: string } | null,
     ownedCustomField: null as { id: string } | null,
+    ownedConversation: null as { id: string } | null,
     automations: [] as Record<string, unknown>[],
     steps: [] as Record<string, unknown>[],
     fromCalls: [] as string[],
@@ -33,6 +34,10 @@ vi.mock("./admin-client", () => {
       }
       // ownership guard / condition read
       return { data: state.owned, error: null };
+    }
+    if (table === "conversations") {
+      // account-scoped ownership lookup for context.conversation_id
+      return { data: state.ownedConversation, error: null };
     }
     if (table === "custom_fields") {
       // account-scoped ownership lookup for a custom field definition
@@ -112,6 +117,7 @@ const ACCOUNT = "acct-1";
 beforeEach(() => {
   h.state.owned = null;
   h.state.ownedCustomField = null;
+  h.state.ownedConversation = null;
   h.state.automations = [];
   h.state.steps = [];
   h.state.fromCalls = [];
@@ -151,6 +157,39 @@ describe("runAutomationsForTrigger — tenant isolation", () => {
       triggerType: "new_message_received",
       contactId: "c1",
       context: {},
+    });
+
+    expect(h.state.fromCalls).toContain("automations");
+  });
+
+  it("refuses to dispatch when context.conversation_id is not in the account", async () => {
+    h.state.owned = { id: "c1" };
+    // The conversation belongs to another tenant; a send step would write into it.
+    h.state.ownedConversation = null;
+    h.state.automations = [automationWithUpdateStep()];
+    h.state.steps = [updateStep()];
+
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: "new_message_received",
+      contactId: "c1",
+      context: { conversation_id: "victim-conversation-uuid" },
+    });
+
+    expect(h.state.fromCalls).toContain("conversations");
+    expect(h.state.fromCalls).not.toContain("automations");
+    expect(h.state.updateCalls).toHaveLength(0);
+  });
+
+  it("proceeds when context.conversation_id belongs to the account", async () => {
+    h.state.owned = { id: "c1" };
+    h.state.ownedConversation = { id: "conv1" };
+
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: "new_message_received",
+      contactId: "c1",
+      context: { conversation_id: "conv1" },
     });
 
     expect(h.state.fromCalls).toContain("automations");

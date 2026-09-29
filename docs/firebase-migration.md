@@ -783,15 +783,137 @@ containers rodam com usuários próprios (`nextjs`, `node`).
 
 ### Fase 6 — Validação (M)
 
-- [ ] Teste de isolamento: dois usuários em contas diferentes tentam ler e
+- [x] Teste de isolamento: dois usuários em contas diferentes tentam ler e
       escrever dados um do outro por `/api/rest`, `/api/*`, Storage e
-      Firestore. Tudo deve falhar.
+      Firestore. Tudo deve falhar. **349/349 no banco de dev**, depois das
+      correções abaixo (migrations 047 e 048, rotas de automação e motor).
+- [x] Migration 047 aplicada em `crm.dhscode.com.br` (2026-09-29): a RPC
+      anônima agora responde `42501 permission denied`.
+- [ ] Migration 048 e as correções de código em `crm.dhscode.com.br` (vão
+      no próximo `infra/vps/deploy.sh`).
 - [ ] Roteiro manual: conectar WhatsApp → receber mensagem → responder com
       áudio → criar contato → mover no pipeline → broadcast → automação com
       Wait → flow → resposta de IA com base de conhecimento → API pública com
-      API key → MCP server.
-- [ ] Rodar `npm test`, `npm run typecheck` e `npm run build`.
+      API key → MCP server. Depende do App Secret real e do webhook do Meta
+      (pendências da Fase 5).
+- [x] Rodar `npm test`, `npm run typecheck` e `npm run build`. `typecheck` e
+      `build` passam. `npm test`: 1084/1089 nesta estação e verde no CI. As 5
+      falhas são de ambiente, em arquivos do upstream que a migração não
+      tocou: `date-utils.test.ts` assume fuso UTC (passa com `TZ=UTC`) e
+      `currency.test.ts` assume o locale `en-US` (o Node no Windows usa o
+      pt-BR do sistema e ignora `LANG`).
 - [ ] Revisar os custos no Billing depois de 48h de uso.
+
+**Teste de isolamento** (`cd infra && npm run isolation:test`, com o
+`npm run dev` no ar sobre a pilha de dev):
+
+- Três usuários fixos, `isolation-{a,b,c}@example.com`, criados na primeira
+  execução pela Identity Toolkit e pelo `/api/auth/session` do próprio app
+  (que cria `auth.users`, perfil e conta). A senha é trocada a cada rodada,
+  então nada secreto fica guardado. Use só contra o banco de dev.
+- A semeia a conta dele como o app faz: `/api/rest` para contato, tag,
+  pipeline, etapa, deal, conversa, mensagem, reação, nota, campo
+  customizado, template e broadcast; as rotas do servidor para quick reply,
+  automação, flow, documento de conhecimento, API key, convite e webhook
+  (`/api/v1`).
+- B ataca por todas as portas: `GET`/`PATCH`/`DELETE` por id e `INSERT` com
+  o `account_id` de A em cada tabela; varredura de todas as 36 tabelas como
+  B e como anônimo; o proxy (header `Authorization` forjado com
+  `service_role`, cookie inválido, path traversal, escrita cross-origin); 28
+  chamadas a rotas `/api/*` com ids de A; a API pública com a API key de B;
+  as RPCs `SECURITY DEFINER`; Storage (gravar, sobrescrever, apagar e listar
+  a pasta de A nos três prefixos); Firestore (ler os sinais de A, gravar
+  sinais).
+- Cada "B não vê nada" tem um controle: a mesma consulta feita por A
+  encontra a linha. No fim, as linhas de A são comparadas com um snapshot
+  tirado antes dos ataques. Esse é o veredito para as rotas que respondem
+  200 a um id alheio sem fazer nada (knowledge `DELETE`, quick replies,
+  automações `DELETE`, engine).
+- Por último, B sai de todas as sessões (`?scope=global`), e o cookie
+  antigo passa a dar 401 em `/api/rest` e nas rotas.
+
+**Achado corrigido: RPCs sem checagem de quem chama.** Seis funções
+`SECURITY DEFINER` do upstream não verificam o chamador e estavam abertas
+em `/api/rest/rpc/*` até para anônimo, porque o compat reproduz o grant
+padrão do Supabase (`EXECUTE` para `anon` e `authenticated`) e as
+migrations do upstream só revogam de `PUBLIC`. O teste mostrou, sem
+sessão, que dava para desativar o webhook de outra conta
+(`record_webhook_failure`), consumir a cota de respostas de IA de uma
+conversa alheia (`claim_ai_reply_slot`) e alterar os contadores de um
+broadcast alheio (`_bcast_bump`, `recompute_broadcast_counts`), além de
+rodar as deduplicações de todas as contas. O mesmo buraco existe no
+upstream sobre o Supabase.
+
+- `infra/db/migrations/047_revoke_service_only_rpcs.sql` revoga `EXECUTE`
+  de `PUBLIC`, `anon` e `authenticated` nessas funções (e em
+  `_bcast_cols_for_status`). Quem as chama de verdade é código com service
+  role (`deliver.ts`, `auto-reply.ts`) ou um trigger `SECURITY DEFINER`,
+  então nada no app muda.
+- `infra/db/verify-rpc-grants.sql` roda no fim do `migrate.mjs` (local, CI
+  e VPS). Ele falha se alguma função `SECURITY DEFINER` de `public`, fora
+  de uma lista revisada (as que checam `auth.uid()` ou um token), ficar
+  chamável por `anon` ou `authenticated`. Um merge do upstream não abre
+  outra em silêncio. Antes da 047, ela acusou exatamente as seis.
+
+**Achados corrigidos: bugs do upstream no app e na RLS.** Não são
+regressão da migração (a RLS e as rotas são as mesmas do Supabase), mas
+ficam corrigidos nesta cópia. São as únicas mudanças fora de `infra/` e de
+`src/lib/supabase/*` nesta fase; ao fazer merge do upstream, conferir se
+ele não reintroduz o filtro por `user_id` nessas rotas.
+
+1. **Ex-membro mantinha acesso às automações que criou.** As rotas
+   `/api/automations/[id]` e `/duplicate` usam o service role e filtravam
+   por `user_id`. C entrou na conta de A, criou uma automação, foi removido
+   e continuou lendo (com a configuração dos passos), editando, duplicando
+   para dentro da conta de A e **apagando** a automação. Agora filtram pelo
+   `account_id` do chamador (`getCurrentAccount` / `requireRole`), como a
+   listagem (RLS) e as rotas de flows, e a cópia vai para a conta do
+   chamador. Efeito colateral intencional: qualquer agente da conta edita
+   as automações da conta, o que a RLS (`automations_update`, agente) já
+   permitia e a listagem já mostrava.
+2. **Motor de automações confiava em `context.conversation_id`.** O
+   `POST /api/automations/engine` repassa o `context` do corpo, e os passos
+   de envio gravam a mensagem e o `last_message_*` nessa conversa pelo
+   service role. `runAutomationsForTrigger` agora confere que a conversa é
+   da conta, como o upstream já fazia com o `contactId`
+   (GHSA-63cv-2c49-m5v3), e recusa em silêncio. Testes em
+   `engine.test.ts`.
+3. **Atribuir uma conversa a um usuário de outra conta** criava, pelo
+   trigger `notify_conversation_assigned` (027), uma notificação com texto
+   escolhido por B no sino do usuário de A.
+4. **Referências a linhas de outra conta.** As políticas só checam o
+   `account_id` da linha nova, e a FK aceita qualquer id existente. B criava
+   na própria conta um deal com o contato, a etapa ou o pipeline de A, uma
+   conversa com o contato de A, ou marcava um contato seu com a tag de A.
+   Não vazava leitura (o embed volta vazio), mas o código com service role
+   que segue essas FKs não confere a conta.
+
+Os casos 3 e 4 foram corrigidos no banco, em
+`infra/db/migrations/048_same_account_references.sql`: triggers
+`BEFORE INSERT OR UPDATE OF <colunas de referência>` em `conversations`
+(contato, agente atribuído), `deals` (contato, conversa, pipeline, etapa,
+responsável), `contact_notes`, `contact_tags`, `contact_custom_values`,
+`broadcast_recipients`, `message_reactions` (a conversa é a da mensagem),
+`messages` (a resposta cita uma mensagem da mesma conversa), `ai_configs`
+(agente de handoff) e `notifications` (destinatário da conta).
+
+- Valem para qualquer caminho de escrita, inclusive o service role e os
+  passos de automação (`assign_conversation`, `create_deal`), que também
+  não conferiam os ids.
+- Só checam quando uma coluna de referência muda. Linhas antigas, como uma
+  conversa ainda atribuída a um ex-membro, continuam funcionando, e os
+  caminhos quentes (`last_message_*`, contadores, status) não passam por
+  eles.
+- O erro é o mesmo (`23503 … not found in this account`) para id
+  inexistente e id de outra conta, então não vira oráculo de ids.
+- Em `notifications` a linha é descartada em silêncio em vez de dar erro:
+  o único escritor é o trigger 027, dentro da gravação de outra pessoa.
+- As funções ficam no schema `app_guard`, que o PostgREST não expõe, e
+  rodam como dono, sem depender da RLS de quem chama.
+
+O teste cobre cada caso com um controle: as mesmas referências dentro da
+conta de B continuam aceitas. Com as rotas antigas, as quatro checagens do
+ex-membro falham (345/349).
 
 ## 5. Decisões para aprovar
 
