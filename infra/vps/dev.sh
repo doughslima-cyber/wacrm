@@ -22,7 +22,9 @@ HOST="${HOST:-servidor}"
 DIR="${DIR:-wacrm}"
 PGRST_PORT="${DEV_POSTGREST_PORT:-3201}"
 DB_PORT="${DEV_DB_PORT:-3202}"
-TUNNEL=(-N -o ExitOnForwardFailure=yes -L "${PGRST_PORT}:127.0.0.1:${PGRST_PORT}" -L "${DB_PORT}:127.0.0.1:${DB_PORT}" "$HOST")
+# Keepalives every 15s: a dead connection is noticed within ~45s instead
+# of hanging until TCP gives up.
+TUNNEL=(-N -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -L "${PGRST_PORT}:127.0.0.1:${PGRST_PORT}" -L "${DB_PORT}:127.0.0.1:${DB_PORT}" "$HOST")
 
 remote_env() { ssh "$HOST" "sed -n 's/^$1=//p' ~/$DIR/infra/vps/.env.dev"; }
 
@@ -105,8 +107,21 @@ REMOTE
     echo ".env.local now points at the dev stack. Next: bash infra/vps/dev.sh tunnel, then npm run dev"
     ;;
   tunnel)
-    echo "tunnel open: PostgREST on localhost:${PGRST_PORT}, Postgres on localhost:${DB_PORT} (Ctrl+C to close)"
-    exec ssh "${TUNNEL[@]}"
+    # Reconnects when the connection drops (a reset on the way to the
+    # VPS kills ssh with 255); Ctrl+C ends it. The wait doubles up to 30s
+    # while reconnecting fails, and starts over after a connection that
+    # held for a minute.
+    trap 'echo; echo "tunnel closed"; exit 0' INT TERM
+    delay=2
+    while true; do
+      echo "tunnel open: PostgREST on localhost:${PGRST_PORT}, Postgres on localhost:${DB_PORT} (Ctrl+C to close)"
+      started=$(date +%s)
+      ssh "${TUNNEL[@]}" || true
+      (( $(date +%s) - started >= 60 )) && delay=2
+      echo "tunnel dropped at $(date +%H:%M:%S); reconnecting in ${delay}s" >&2
+      sleep "$delay"
+      delay=$(( delay * 2 > 30 ? 30 : delay * 2 ))
+    done
     ;;
   *)
     echo "usage: bash infra/vps/dev.sh up | tunnel" >&2
