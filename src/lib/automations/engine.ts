@@ -92,6 +92,28 @@ export async function runAutomationsForTrigger(input: DispatchInput): Promise<vo
       }
     }
 
+    // Same for the conversation: send steps write the outbound message
+    // and last_message_* into context.conversation_id through the
+    // service-role client, and the manual entrypoint takes the context
+    // from the request body too.
+    const conversationId = input.context?.conversation_id
+    if (conversationId) {
+      const { data: owned, error: ownErr } = await db
+        .from('conversations')
+        .select('id')
+        .eq('id', conversationId)
+        .eq('account_id', input.accountId)
+        .maybeSingle()
+      if (ownErr) {
+        console.error('[automations] conversation ownership check failed:', ownErr)
+        return
+      }
+      if (!owned) {
+        console.warn('[automations] conversation not in account, refusing dispatch', conversationId)
+        return
+      }
+    }
+
     const { data: automations, error } = await db
       .from('automations')
       .select('*')

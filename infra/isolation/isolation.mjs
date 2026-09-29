@@ -66,14 +66,6 @@ function check(name, ok, detail = '') {
   if (!ok) console.log(`  FAIL ${section} › ${name}${detail ? ` — ${detail}` : ''}`)
 }
 
-// Known upstream behaviour (same RLS as on Supabase): reported, but it
-// doesn't fail the run. See docs/firebase-migration.md, phase 6.
-const warnings = []
-function warn(name, ok, detail = '') {
-  if (ok) return check(name, true)
-  warnings.push({ section, name, detail })
-  console.log(`  WARN ${section} › ${name}${detail ? ` — ${detail}` : ''}`)
-}
 
 function begin(title) {
   section = title
@@ -402,10 +394,9 @@ for (const [table, row] of Object.entries(INSERTS)) {
 
 begin('/api/rest — B references A rows from its own account')
 // Rows in B's own account pointing at A's rows. The upstream policies
-// (017_account_sharing.sql) only check the new row's account_id, so the
-// FK takes any existing id: B can plant these if it knows the uuid
-// (reported as WARN). What must hold is that B still can't read A's
-// row through the reference. B's rows are removed afterwards.
+// (017_account_sharing.sql) only check the new row's account_id and a
+// foreign key takes any existing id; migration 048 refuses these on
+// every write path. Anything B manages to plant is removed afterwards.
 {
   const planted = []
   const plant = async (table, row) => {
@@ -413,36 +404,55 @@ begin('/api/rest — B references A rows from its own account')
     if (res.status === 201) planted.push([table, res.json[0].id])
     return res
   }
-  const bContact = await mustInsert(B, 'contacts', { user_id: B.userId, account_id: B.accountId, phone: `+5521${Date.now().toString().slice(-8)}`, name: 'B contato' })
-  const bPipeline = await mustInsert(B, 'pipelines', { user_id: B.userId, account_id: B.accountId, name: 'B pipeline' })
-  const dealRes = await plant('deals', {
-    user_id: B.userId,
-    account_id: B.accountId,
-    pipeline_id: bPipeline.id,
-    stage_id: seed.pipeline_stages.id,
-    contact_id: seed.contacts.id,
-    title: 'B deal apontando para A',
-    value: 1,
-  })
-  warn('deals: B deal with A contact/stage refused', dealRes.status >= 400, `${dealRes.status}`)
-  if (dealRes.status === 201) {
-    const embed = await rest.get(B, 'deals', `id=eq.${dealRes.json[0].id}&select=id,contacts(*),pipeline_stages(*)`)
-    check('deals: embed of A contact/stage stays hidden', embed.status === 200 && !embed.text.includes(seed.contacts.name) && !embed.text.includes('"Novo"'), short(embed.text))
+  const bOwn = { user_id: B.userId, account_id: B.accountId }
+  const bContact = await mustInsert(B, 'contacts', { ...bOwn, phone: `+5521${Date.now().toString().slice(-8)}`, name: 'B contato' })
+  const bPipeline = await mustInsert(B, 'pipelines', { ...bOwn, name: 'B pipeline' })
+  const bStage = await mustInsert(B, 'pipeline_stages', { pipeline_id: bPipeline.id, name: 'B etapa', position: 0, color: '#000000' })
+  const bConv = await mustInsert(B, 'conversations', { ...bOwn, contact_id: bContact.id, status: 'open' })
+  const bMessage = await mustInsert(B, 'messages', { conversation_id: bConv.id, sender_type: 'agent', sender_id: B.userId, content_type: 'text', content_text: 'B', status: 'sent' })
+  const bBroadcast = await mustInsert(B, 'broadcasts', { ...bOwn, name: 'B broadcast', template_name: 'hello_world', template_language: 'en_US', status: 'draft' })
+  const aProfileId = (await rest.get(A, 'profiles', `user_id=eq.${A.userId}&select=id`)).json?.[0]?.id
+
+  const attempts = [
+    ['deals', 'deal on A contact', { ...bOwn, pipeline_id: bPipeline.id, stage_id: bStage.id, contact_id: seed.contacts.id, title: 'x', value: 1 }],
+    ['deals', 'deal on A stage', { ...bOwn, pipeline_id: bPipeline.id, stage_id: seed.pipeline_stages.id, title: 'x', value: 1 }],
+    ['deals', 'deal on A pipeline', { ...bOwn, pipeline_id: seed.pipelines.id, stage_id: bStage.id, title: 'x', value: 1 }],
+    ['deals', 'deal on A conversation', { ...bOwn, pipeline_id: bPipeline.id, stage_id: bStage.id, conversation_id: seed.conversations.id, title: 'x', value: 1 }],
+    ['deals', 'deal assigned to A profile', { ...bOwn, pipeline_id: bPipeline.id, stage_id: bStage.id, assigned_to: aProfileId, title: 'x', value: 1 }],
+    ['conversations', 'conversation with A contact', { ...bOwn, contact_id: seed.contacts.id, status: 'open' }],
+    ['conversations', 'conversation assigned to A user', { ...bOwn, contact_id: bContact.id, status: 'open', assigned_agent_id: A.userId }],
+    ['contact_notes', 'note on A contact', { ...bOwn, contact_id: seed.contacts.id, note_text: 'x' }],
+    ['contact_tags', 'B contact with A tag', { contact_id: bContact.id, tag_id: seed.tags.id }],
+    ['contact_custom_values', 'B contact with A custom field', { contact_id: bContact.id, custom_field_id: seed.custom_fields.id, value: 'x' }],
+    ['messages', 'B message quoting A message', { conversation_id: bConv.id, sender_type: 'agent', sender_id: B.userId, content_type: 'text', content_text: 'x', status: 'sent', reply_to_message_id: seed.messages.id }],
+    ['message_reactions', 'reaction on B message filed under A conversation', { message_id: bMessage.id, conversation_id: seed.conversations.id, actor_type: 'agent', actor_id: B.userId, emoji: '💀' }],
+    ['broadcast_recipients', 'B broadcast to A contact', { broadcast_id: bBroadcast.id, contact_id: seed.contacts.id }],
+    ['ai_configs', 'AI handoff to A user', { account_id: B.accountId, provider: 'openai', model: 'gpt-4o-mini', api_key: 'x', handoff_agent_id: A.userId }],
+  ]
+  for (const [table, label, row] of attempts) {
+    const res = await plant(table, row)
+    check(`${table}: ${label} refused`, res.status >= 400, `${res.status} ${short(res.text)}`)
   }
-  const convRes = await plant('conversations', { user_id: B.userId, account_id: B.accountId, contact_id: seed.contacts.id, status: 'open' })
-  warn('conversations: B conversation with A contact refused', convRes.status >= 400, `${convRes.status}`)
-  if (convRes.status === 201) {
-    const embed = await rest.get(B, 'conversations', `id=eq.${convRes.json[0].id}&select=id,contacts(*)`)
-    check('conversations: embed of A contact stays hidden', embed.status === 200 && !embed.text.includes(seed.contacts.name) && !embed.text.includes(seed.contacts.phone), short(embed.text))
+  // Moving an existing row onto A's rows.
+  const moves = [
+    ['conversations', bConv.id, { contact_id: seed.contacts.id }, 'B conversation moved to A contact'],
+    ['conversations', bConv.id, { assigned_agent_id: A.userId }, 'B conversation reassigned to A user'],
+  ]
+  for (const [table, id, patch, label] of moves) {
+    const res = await rest.patch(B, table, `id=eq.${id}`, patch)
+    check(`${table}: ${label} refused`, res.status >= 400, `${res.status} ${short(res.text)}`)
   }
-  const tagRes = await plant('contact_tags', { contact_id: bContact.id, tag_id: seed.tags.id })
-  warn('contact_tags: B contact tagged with A tag refused', tagRes.status >= 400, `${tagRes.status}`)
-  if (tagRes.status === 201) {
-    const embed = await rest.get(B, 'contact_tags', `id=eq.${tagRes.json[0].id}&select=id,tags(*)`)
-    check('contact_tags: embed of A tag stays hidden', embed.status === 200 && !embed.text.includes(seed.tags.name), short(embed.text))
+  // Control: the same references inside B's own account still work.
+  const ownDeal = await plant('deals', { ...bOwn, pipeline_id: bPipeline.id, stage_id: bStage.id, contact_id: bContact.id, conversation_id: bConv.id, title: 'ok', value: 1 })
+  check('deals: references inside B account accepted (control)', ownDeal.status === 201, `${ownDeal.status} ${short(ownDeal.text)}`)
+  const assign = await rest.patch(B, 'conversations', `id=eq.${bConv.id}`, { assigned_agent_id: B.userId })
+  check('conversations: assigning to a member of B accepted (control)', assign.status === 200 && assign.json?.length === 1, `${assign.status} ${short(assign.text)}`)
+
+  for (const [table, id] of planted.reverse()) await rest.delete(B, table, `id=eq.${id}`)
+  for (const [table, id] of [['broadcasts', bBroadcast.id], ['messages', bMessage.id], ['conversations', bConv.id], ['pipelines', bPipeline.id], ['contacts', bContact.id]]) {
+    await rest.delete(B, table, `id=eq.${id}`)
   }
-  planted.push(['contacts', bContact.id], ['pipelines', bPipeline.id])
-  for (const [table, id] of planted) await rest.delete(B, table, `id=eq.${id}`)
+  await rest.delete(B, 'ai_configs', `account_id=eq.${B.accountId}&api_key=eq.x`)
 }
 
 begin('/api/rest — whole-table sweep')
@@ -495,7 +505,7 @@ begin('/api/rest — proxy')
   check('cross-origin write refused', cross.status === 403, `${cross.status}`)
 }
 
-await attackRoutes({ A, B, C, call, rest, check, warn, begin, seed, tag8, short, v1 })
+await attackRoutes({ A, B, C, call, rest, check, begin, seed, tag8, short, v1 })
 
 // ------------------------------------------------------------------
 // Cloud Storage (Firebase rules, with the users' own ID tokens)
@@ -598,8 +608,4 @@ for (const r of results) {
 console.log('\n## summary')
 for (const [name, { pass, fail }] of Object.entries(bySection)) console.log(`  ${fail ? 'FAIL' : 'ok  '} ${name}: ${pass} passed${fail ? `, ${fail} failed` : ''}`)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)
-if (warnings.length) {
-  console.log(`${warnings.length} upstream warning(s):`)
-  for (const w of warnings) console.log(`  WARN ${w.section} › ${w.name}`)
-}
 process.exit(failed.length ? 1 : 0)

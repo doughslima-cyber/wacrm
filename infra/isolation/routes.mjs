@@ -94,7 +94,7 @@ export async function seedRoutes({ A, B, call, rest, seed, tag8 }) {
   return { v1 }
 }
 
-export async function attackRoutes({ A, B, C, call, rest, check, warn, begin, seed, tag8, short, v1 }) {
+export async function attackRoutes({ A, B, C, call, rest, check, begin, seed, tag8, short, v1 }) {
   const secrets = [seed.contacts.name, seed.messages.content_text, `Iso automação ${tag8}`, `Iso KB ${tag8}`, 'conhecimento secreto de A']
   const shows = (res) => secrets.filter((s) => res.text.includes(s))
 
@@ -185,8 +185,8 @@ export async function attackRoutes({ A, B, C, call, rest, check, warn, begin, se
     if (bConv) assigned = await rest.patch(B, 'conversations', `id=eq.${bConv.id}`, { assigned_agent_id: A.userId })
     const notes = await rest.get(A, 'notifications', `user_id=eq.${A.userId}&account_id=eq.${B.accountId}`)
     const planted = Array.isArray(notes.json) && notes.json.length > 0
-    warn('conversations: B cannot assign its conversation to A user', !(assigned?.status === 200 && assigned.json?.length), `${assigned?.status}`)
-    warn('notifications: nothing from B account reaches A', !planted, planted ? `${notes.json.length} notification(s): ${short(notes.json[0].title)}` : '')
+    check('conversations: B cannot assign its conversation to A user', !(assigned?.status === 200 && assigned.json?.length), `${assigned?.status}`)
+    check('notifications: nothing from B account reaches A', !planted, planted ? `${notes.json.length} notification(s): ${short(notes.json[0].title)}` : '')
     if (planted) for (const n of notes.json) await rest.delete(A, 'notifications', `id=eq.${n.id}`)
     if (bConv) await rest.delete(B, 'conversations', `id=eq.${bConv.id}`)
     if (bContact) await rest.delete(B, 'contacts', `id=eq.${bContact.id}`)
@@ -285,11 +285,11 @@ export async function attackRoutes({ A, B, C, call, rest, check, warn, begin, se
           ['POST', `/api/automations/${autoId}/duplicate`],
         ]) {
           const res = await call(C, method, path, { body })
-          warn(`ex-member ${method} ${path.replace(/[0-9a-f-]{36}/g, ':id')} refused`, refused(res), `${res.status} ${short(res.text)}`)
+          check(`ex-member ${method} ${path.replace(/[0-9a-f-]{36}/g, ':id')} refused`, refused(res), `${res.status} ${short(res.text)}`)
         }
         const del = await call(C, 'DELETE', `/api/automations/${autoId}`)
         const still = await rest.get(A, 'automations', `id=eq.${autoId}&select=id,name`)
-        warn('ex-member DELETE /api/automations/:id leaves it in A', Array.isArray(still.json) && still.json.length === 1, `${del.status} → ${short(still.text)}`)
+        check('ex-member DELETE /api/automations/:id leaves it in A', Array.isArray(still.json) && still.json.length === 1, `${del.status} → ${short(still.text)}`)
         // Clean up whatever C left in A (the original and any duplicate).
         await rest.delete(A, 'automations', `name=like.*${tag8}*&user_id=eq.${C.userId}`)
       }

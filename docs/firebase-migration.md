@@ -781,10 +781,12 @@ containers rodam com usuários próprios (`nextjs`, `node`).
 
 - [x] Teste de isolamento: dois usuários em contas diferentes tentam ler e
       escrever dados um do outro por `/api/rest`, `/api/*`, Storage e
-      Firestore. Tudo deve falhar. **328/328 no banco de dev**, depois da
-      migration 047 (abaixo). Ficaram 9 avisos, todos de código do upstream.
-- [ ] Migration 047 aplicada em `crm.dhscode.com.br` (vai no próximo
-      `infra/vps/deploy.sh`).
+      Firestore. Tudo deve falhar. **349/349 no banco de dev**, depois das
+      correções abaixo (migrations 047 e 048, rotas de automação e motor).
+- [x] Migration 047 aplicada em `crm.dhscode.com.br` (2026-09-29): a RPC
+      anônima agora responde `42501 permission denied`.
+- [ ] Migration 048 e as correções de código em `crm.dhscode.com.br` (vão
+      no próximo `infra/vps/deploy.sh`).
 - [ ] Roteiro manual: conectar WhatsApp → receber mensagem → responder com
       áudio → criar contato → mover no pipeline → broadcast → automação com
       Wait → flow → resposta de IA com base de conhecimento → API pública com
@@ -849,31 +851,65 @@ upstream sobre o Supabase.
   chamável por `anon` ou `authenticated`. Um merge do upstream não abre
   outra em silêncio. Antes da 047, ela acusou exatamente as seis.
 
-**Avisos: bugs do upstream, não corrigidos.** Não são regressão da
-migração (a RLS e as rotas são as mesmas do Supabase). Corrigir exige
-mexer em arquivos do upstream, o que fica para decidir:
+**Achados corrigidos: bugs do upstream no app e na RLS.** Não são
+regressão da migração (a RLS e as rotas são as mesmas do Supabase), mas
+ficam corrigidos nesta cópia. São as únicas mudanças fora de `infra/` e de
+`src/lib/supabase/*` nesta fase; ao fazer merge do upstream, conferir se
+ele não reintroduz o filtro por `user_id` nessas rotas.
 
-1. **Ex-membro mantém acesso às automações que criou.** As rotas
-   `/api/automations/[id]` (e `/duplicate`) filtram por `user_id`, não por
-   `account_id`. C entrou na conta de A, criou uma automação, foi removido
+1. **Ex-membro mantinha acesso às automações que criou.** As rotas
+   `/api/automations/[id]` e `/duplicate` usam o service role e filtravam
+   por `user_id`. C entrou na conta de A, criou uma automação, foi removido
    e continuou lendo (com a configuração dos passos), editando, duplicando
-   para dentro da conta de A e **apagando** a automação.
-2. **Motor de automações confia em `context.conversation_id`**
-   (`engine.ts`, `resolveConversationId`). Com um WhatsApp conectado, B
-   grava a mensagem enviada e atualiza `last_message_*` numa conversa de A.
-   O teste só confirma que nada chega enquanto B não tem número.
-3. **Atribuir uma conversa a um usuário de outra conta.** A RLS de
-   `conversations` não confere o `assigned_agent_id`, e o trigger
-   `notify_conversation_assigned` cria uma notificação para o usuário de
-   A, que ele enxerga.
+   para dentro da conta de A e **apagando** a automação. Agora filtram pelo
+   `account_id` do chamador (`getCurrentAccount` / `requireRole`), como a
+   listagem (RLS) e as rotas de flows, e a cópia vai para a conta do
+   chamador. Efeito colateral intencional: qualquer agente da conta edita
+   as automações da conta, o que a RLS (`automations_update`, agente) já
+   permitia e a listagem já mostrava.
+2. **Motor de automações confiava em `context.conversation_id`.** O
+   `POST /api/automations/engine` repassa o `context` do corpo, e os passos
+   de envio gravam a mensagem e o `last_message_*` nessa conversa pelo
+   service role. `runAutomationsForTrigger` agora confere que a conversa é
+   da conta, como o upstream já fazia com o `contactId`
+   (GHSA-63cv-2c49-m5v3), e recusa em silêncio. Testes em
+   `engine.test.ts`.
+3. **Atribuir uma conversa a um usuário de outra conta** criava, pelo
+   trigger `notify_conversation_assigned` (027), uma notificação com texto
+   escolhido por B no sino do usuário de A.
 4. **Referências a linhas de outra conta.** As políticas só checam o
-   `account_id` da linha nova, então B cria na própria conta um deal com o
-   contato e a etapa de A, uma conversa com o contato de A ou marca um
-   contato seu com a tag de A. Não vaza leitura (o embed volta vazio), mas
-   o código com service role que seguir essas FKs pode.
+   `account_id` da linha nova, e a FK aceita qualquer id existente. B criava
+   na própria conta um deal com o contato, a etapa ou o pipeline de A, uma
+   conversa com o contato de A, ou marcava um contato seu com a tag de A.
+   Não vazava leitura (o embed volta vazio), mas o código com service role
+   que segue essas FKs não confere a conta.
 
-Os casos 2 a 4 exigem conhecer o uuid do registro de A, que não aparece
-para B em lugar nenhum. O caso 1 não: o ex-membro já tinha os ids.
+Os casos 3 e 4 foram corrigidos no banco, em
+`infra/db/migrations/048_same_account_references.sql`: triggers
+`BEFORE INSERT OR UPDATE OF <colunas de referência>` em `conversations`
+(contato, agente atribuído), `deals` (contato, conversa, pipeline, etapa,
+responsável), `contact_notes`, `contact_tags`, `contact_custom_values`,
+`broadcast_recipients`, `message_reactions` (a conversa é a da mensagem),
+`messages` (a resposta cita uma mensagem da mesma conversa), `ai_configs`
+(agente de handoff) e `notifications` (destinatário da conta).
+
+- Valem para qualquer caminho de escrita, inclusive o service role e os
+  passos de automação (`assign_conversation`, `create_deal`), que também
+  não conferiam os ids.
+- Só checam quando uma coluna de referência muda. Linhas antigas, como uma
+  conversa ainda atribuída a um ex-membro, continuam funcionando, e os
+  caminhos quentes (`last_message_*`, contadores, status) não passam por
+  eles.
+- O erro é o mesmo (`23503 … not found in this account`) para id
+  inexistente e id de outra conta, então não vira oráculo de ids.
+- Em `notifications` a linha é descartada em silêncio em vez de dar erro:
+  o único escritor é o trigger 027, dentro da gravação de outra pessoa.
+- As funções ficam no schema `app_guard`, que o PostgREST não expõe, e
+  rodam como dono, sem depender da RLS de quem chama.
+
+O teste cobre cada caso com um controle: as mesmas referências dentro da
+conta de B continuam aceitas. Com as rotas antigas, as quatro checagens do
+ex-membro falham (345/349).
 
 ## 5. Decisões para aprovar
 
