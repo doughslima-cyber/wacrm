@@ -1,0 +1,11 @@
+# Dev stack on the VPS, for `npm run dev` on a workstation (infra/vps/dev.sh).
+# Layered on compose.yml under its own project (wacrm-dev), so it has its
+# own Postgres volume and network; only db, postgrest and relay run. Both
+# are published on the VPS's loopback, reached through an SSH tunnel.
+services:
+  db:
+    ports:
+      - '127.0.0.1:${DEV_DB_PORT:-3202}:5432'
+  postgrest:
+    ports:
+      - '127.0.0.1:${DEV_POSTGREST_PORT:-3201}:3000'

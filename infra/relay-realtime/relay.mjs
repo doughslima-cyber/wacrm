@@ -18,12 +18,14 @@
 // meantime, and a burst of old events would only confuse fresh tabs.
 // Published rows older than RETAIN_MS are deleted.
 //
-// Runs as a Cloud Run service with one always-on instance (deploy.sh).
-// The HTTP endpoint only exists for Cloud Run: it reports whether the
-// database connection is up.
+// Runs as a single always-on process: a Cloud Run service (deploy.sh)
+// or a container next to the database (infra/vps). The HTTP endpoint
+// reports whether the database connection is up, for health checks.
 //
 // Env:
-//   INSTANCE_CONNECTION_NAME  project:region:instance
+//   INSTANCE_CONNECTION_NAME  project:region:instance (Cloud SQL connector)
+//   DB_HOST, DB_PORT          instead: a Postgres reachable directly
+//                             (DB_PORT default 5432)
 //   DB_NAME                   default: wacrm
 //   DB_USER                   default: realtime_relay
 //   DB_PASSWORD               the realtime_relay password (Secret Manager)
@@ -70,7 +72,9 @@ function required(name) {
 // Clients
 // ------------------------------------------------------------------
 
-const instance = required('INSTANCE_CONNECTION_NAME')
+const dbHost = process.env.DB_HOST
+const dbPort = Number(process.env.DB_PORT) || 5432
+const instance = dbHost ? null : required('INSTANCE_CONNECTION_NAME')
 const dbPassword = required('DB_PASSWORD')
 const dbName = process.env.DB_NAME || 'wacrm'
 const dbUser = process.env.DB_USER || 'realtime_relay'
@@ -84,9 +88,9 @@ function tokenAuth() {
 }
 
 const authClient = tokenAuth()
-const connector = new Connector({ auth: authClient })
+const connector = dbHost ? null : new Connector({ auth: authClient })
 const firestore = new Firestore({
-  projectId: process.env.FIRESTORE_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || instance.split(':')[0],
+  projectId: process.env.FIRESTORE_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || instance?.split(':')[0],
   preferRest: true,
   ...(authClient ? { authClient } : {}),
 })
@@ -211,7 +215,9 @@ function wake() {
 }
 
 async function connect() {
-  const opts = await connector.getOptions({ instanceConnectionName: instance, ipType: 'PUBLIC' })
+  const opts = connector
+    ? await connector.getOptions({ instanceConnectionName: instance, ipType: 'PUBLIC' })
+    : { host: dbHost, port: dbPort }
   const client = new pg.Client({
     ...opts,
     user: dbUser,
@@ -283,7 +289,7 @@ async function shutdown() {
   stopping = true
   server.close()
   await db?.end().catch(() => {})
-  connector.close()
+  connector?.close()
   process.exit(0)
 }
 process.on('SIGTERM', shutdown)

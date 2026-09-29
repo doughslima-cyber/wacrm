@@ -2,9 +2,11 @@
 
 The repo ships a multi-stage `Dockerfile` (Next.js standalone output,
 runs as a non-root user) and a `docker-compose.yml` with a single
-`app` service. Supabase is external — point the app at your hosted
-(or self-hosted) Supabase project via env vars; no database container
-is included.
+`app` service. The database (Cloud SQL behind PostgREST), Firebase
+Auth, Storage and Firestore are external — point the app at them via
+env vars (`.env.local.example`); no database container is included.
+The production deploy on Google Cloud is described in
+`docs/firebase-migration.md` (phase 5).
 
 ## Quick start
 
@@ -39,7 +41,7 @@ is included.
   `docker compose --env-file .env.local up --build -d`. This includes
   `NEXT_PUBLIC_APP_LOCALE` (`en | ko | pt | es`), so the UI language is
   fixed per image.
-- Everything else (`SUPABASE_SERVICE_ROLE_KEY`, `ENCRYPTION_KEY`,
+- Everything else (`POSTGREST_JWT_SECRET`, `ENCRYPTION_KEY`,
   `META_APP_SECRET`, …) is read at **runtime** from `.env.local` via
   `env_file` and is never baked into the image — safe to change with
   just a container restart.
@@ -48,8 +50,10 @@ is included.
 
 ```bash
 docker build \
-  --build-arg NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co \
-  --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key \
+  --build-arg NEXT_PUBLIC_FIREBASE_PROJECT_ID=your-project \
+  --build-arg NEXT_PUBLIC_FIREBASE_API_KEY=your-web-api-key \
+  --build-arg NEXT_PUBLIC_FIREBASE_APP_ID=your-web-app-id \
+  --build-arg NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=your-project.firebasestorage.app \
   -t wacrm .
 
 docker run -d --env-file .env.local -e PORT=3000 -p 3000:3000 wacrm
@@ -57,11 +61,11 @@ docker run -d --env-file .env.local -e PORT=3000 -p 3000:3000 wacrm
 
 ## Notes
 
-- Database migrations under `supabase/` are **not** run by the
-  container — apply them with the Supabase CLI as described in the
-  README.
-- Received attachments are copied into the `chat-media` Supabase
-  Storage bucket, because Meta deletes media roughly 30 days after it
+- Database migrations are **not** run by the container — apply them
+  with `cd infra && npm run db:migrate` (compat layer, `supabase/
+  migrations` and `infra/db/migrations`, in that order).
+- Received attachments are copied into the `chat-media/` prefix of the
+  Cloud Storage bucket, because Meta deletes media roughly 30 days after it
   arrives and the copy is the only thing that outlives that. It grows
   with inbound volume, so it's worth watching your project's storage
   quota. Turn it off per account under Settings → WhatsApp →

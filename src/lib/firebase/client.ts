@@ -35,7 +35,8 @@ export function firebaseApp(): FirebaseApp {
     initializeApp({
       apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
       authDomain:
-        process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ??
+        // `||`: an unset Docker build arg arrives as "" (Dockerfile ENV).
+        process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ||
         `${process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID}.firebaseapp.com`,
       projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
       storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,

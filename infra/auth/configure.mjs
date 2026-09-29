@@ -77,13 +77,28 @@ for (const [field, [from, to]] of changed) {
 }
 if (dryRun) process.exit(0)
 
-// Build the PATCH body from the dotted field names.
-const body = {}
+// One PATCH per field: Identity Toolkit can refuse one of them (the
+// action URL gives EMAIL_TEMPLATE_UPDATE_NOT_ALLOWED on projects that
+// still send from the default Firebase domain) and that must not block
+// the others.
+let failed = 0
 for (const [field, [, to]] of changed) {
+  const body = {}
   const parts = field.split('.')
   let node = body
   for (const part of parts.slice(0, -1)) node = node[part] ??= {}
   node[parts.at(-1)] = to
+  try {
+    await call('PATCH', `${CONFIG_URL}?updateMask=${field}`, body)
+    console.log(`${field}: updated`)
+  } catch (err) {
+    failed++
+    console.error(`${field}: ${err.message}`)
+  }
 }
-await call('PATCH', `${CONFIG_URL}?updateMask=${changed.map(([f]) => f).join(',')}`, body)
-console.log('Firebase Auth updated.')
+if (failed) {
+  console.error(`${failed} field(s) not updated; set them in the Firebase console (Authentication → Templates / Settings).`)
+  process.exitCode = 1
+} else {
+  console.log('Firebase Auth updated.')
+}

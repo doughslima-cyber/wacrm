@@ -4,6 +4,13 @@ import { Connector } from '@google-cloud/cloud-sql-connector'
 import { OAuth2Client } from 'google-auth-library'
 
 export async function openDb() {
+  // A Postgres reachable directly (the VPS dev stack through its tunnel,
+  // infra/vps/dev.sh): postgres://postgres:…@localhost:3202/wacrm
+  if (process.env.DATABASE_URL) {
+    const client = new pg.Client({ connectionString: process.env.DATABASE_URL })
+    await client.connect()
+    return { client, close: () => client.end() }
+  }
   let auth
   if (process.env.GOOGLE_OAUTH_ACCESS_TOKEN) {
     auth = new OAuth2Client()
