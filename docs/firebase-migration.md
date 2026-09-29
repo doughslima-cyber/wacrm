@@ -676,11 +676,25 @@ Postgres padrão com a camada de compat, e o app não muda.
 - [x] `infra/vps/compose.yml` e `infra/vps/deploy.sh`.
 - [x] Relay do Cloud Run com `min-instances=0` (o realtime da UI publicada
       no Cloud Run, se houver, cai no polling).
-- [ ] Service account `wacrm-vps` e a chave dela na VPS (passo manual,
+- [x] Service account `wacrm-vps` e a chave dela na VPS (passo manual,
       abaixo).
-- [ ] `crm.dhscode.com.br` no túnel Cloudflare `meu-servidor`.
-- [ ] `cd infra && SITE_URL=https://crm.dhscode.com.br npm run auth:configure`:
-      URL de ação dos emails e domínio autorizado.
+- [x] Primeiro deploy: os 5 serviços no ar (~190 MB de RAM no total), 47
+      migrations aplicadas, `verify-schema.sql` passando, relay em `LISTEN`.
+- [x] `crm.dhscode.com.br` no túnel Cloudflare `meu-servidor` (regra antes
+      do catch-all, CNAME criado pelo `cloudflared tunnel route dns`; backup
+      do `config.yml` ao lado dele). `/login` responde 200 pelo domínio,
+      o Cloudflare não guarda HTML (`cf-cache-status: DYNAMIC`) e os outros
+      subdomínios do túnel continuam no ar.
+- [ ] Domínio `crm.dhscode.com.br` nos domínios autorizados do Firebase
+      Auth: `cd infra && SITE_URL=https://crm.dhscode.com.br npm run auth:configure`.
+      Sem isso, o email de verificação do cadastro falha (continue URL não
+      autorizada).
+- [ ] URL de ação dos emails → `https://crm.dhscode.com.br/auth/action`,
+      pelo console (Authentication → Templates → editar → "Personalizar URL
+      de ação"). A API recusa essa mudança (`EMAIL_TEMPLATE_UPDATE_NOT_ALLOWED`)
+      enquanto o projeto envia pelo domínio padrão do Firebase. Até lá, os
+      links abrem o handler hospedado do Firebase, que também confirma e volta
+      para o `continueUrl`.
 - [ ] App Secret real no `META_APP_SECRET` e webhook do Meta →
       `https://crm.dhscode.com.br/api/whatsapp/webhook`.
 - [ ] Depois de validar a VPS: apagar o Cloud SQL `wacrm-pg` e os Cloud Run
