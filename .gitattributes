@@ -1,0 +1,4 @@
+# Shell scripts run under bash, which fails on CRLF line endings
+# ("$'\r': command not found"). Keep them LF in every checkout,
+# whatever core.autocrlf is set to.
+*.sh text eol=lf
