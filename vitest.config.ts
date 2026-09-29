@@ -15,7 +15,10 @@ export default defineConfig({
       ENCRYPTION_KEY:
         "0000000000000000000000000000000000000000000000000000000000000000",
       META_APP_SECRET: "test-meta-app-secret",
+      // Same time zone as CI; vitest.setup.ts pins the locale.
+      TZ: "UTC",
     },
+    setupFiles: ["./vitest.setup.ts"],
     clearMocks: true,
   },
 });
