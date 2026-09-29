@@ -94,6 +94,9 @@ export const SEEN_TTL_MS = 15 * 60_000;
 /** Last channel gone → stop after this, unless another one joins. */
 export const IDLE_STOP_MS = 10_000;
 export const FETCH_CHUNK = 100;
+/** A signal whose row fetch fails is retried after 1s, 2s, 4s. */
+export const FETCH_RETRIES = 3;
+export const FETCH_RETRY_MS = 1_000;
 
 type Mode = "idle" | "starting" | "push" | "polling";
 
@@ -124,6 +127,8 @@ export class RealtimeHub {
   private readonly members = new Map<RealtimeChannel, RealtimeStatusCallback>();
   private readonly parsed = new WeakMap<object, ParsedFilter | null>();
   private readonly seen = new Map<string, number>();
+  /** Failed fetch attempts per signal awaiting a retry. */
+  private readonly attempts = new WeakMap<ChangeSignal, number>();
   private queue: ChangeSignal[] = [];
 
   private mode: Mode = "idle";
@@ -423,17 +428,18 @@ export class RealtimeHub {
       wanted.get(s.table)!.add(s.rowId);
     }
 
-    let fetchFailed = false;
+    const failed = new Set<string>();
     await Promise.all(
       [...wanted].map(async ([table, idSet]) => {
         const column = primaryKeyOf(table);
         const ids = [...idSet];
         for (let i = 0; i < ids.length; i += FETCH_CHUNK) {
+          const chunk = ids.slice(i, i + FETCH_CHUNK);
           try {
-            const data = await this.deps.fetchRows(table, column, ids.slice(i, i + FETCH_CHUNK));
+            const data = await this.deps.fetchRows(table, column, chunk);
             for (const row of data) rows.set(rowKey(table, String(row[column])), row);
           } catch (err) {
-            fetchFailed = true;
+            for (const id of chunk) failed.add(rowKey(table, id));
             console.error(`[realtime] fetching ${table} failed:`, (err as Error)?.message ?? err);
           }
         }
@@ -441,7 +447,12 @@ export class RealtimeHub {
     );
     if (gen !== this.generation) return;
 
+    let gaveUp = false;
     for (const signal of relevant) {
+      if (signal.op !== "DELETE" && failed.has(rowKey(signal.table, signal.rowId))) {
+        if (!this.retryLater(signal)) gaveUp = true;
+        continue;
+      }
       const row = signal.op === "DELETE" ? null : (rows.get(rowKey(signal.table, signal.rowId)) ?? null);
       // Not visible to this user (RLS), or already gone.
       if (signal.op !== "DELETE" && !row) continue;
@@ -458,10 +469,34 @@ export class RealtimeHub {
       }
     }
 
-    // Changes were lost for the affected listeners: tell the channels,
-    // the way a dropped socket would, so pages that resync on
-    // reconnect do.
-    if (fetchFailed) this.resync();
+    // Retries exhausted: those changes are lost for their listeners.
+    // Tell the channels, the way a dropped socket would, so pages that
+    // resync on reconnect do.
+    if (gaveUp) this.resync();
+  }
+
+  /**
+   * Queues a signal whose row couldn't be fetched for another try,
+   * with backoff. Its ids stay "seen" meanwhile, so the other source
+   * doesn't deliver it twice. Returns false once retries run out; the
+   * ids are then released, so a later poll of the log can still
+   * deliver the change.
+   */
+  private retryLater(signal: ChangeSignal): boolean {
+    const attempt = (this.attempts.get(signal) ?? 0) + 1;
+    if (attempt > FETCH_RETRIES) {
+      this.attempts.delete(signal);
+      for (const id of signal.ids) this.seen.delete(id);
+      return false;
+    }
+    this.attempts.set(signal, attempt);
+    const gen = this.generation;
+    setTimeout(() => {
+      if (gen !== this.generation) return;
+      this.queue.push(signal);
+      void this.process();
+    }, FETCH_RETRY_MS * 2 ** (attempt - 1));
+    return true;
   }
 
   // ----------------------------------------------------------------

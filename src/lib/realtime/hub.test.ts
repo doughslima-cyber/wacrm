@@ -7,6 +7,8 @@ import {
 } from "@/lib/supabase/app-client";
 import type { ChangeSignal } from "./changes";
 import {
+  FETCH_RETRIES,
+  FETCH_RETRY_MS,
   IDLE_STOP_MS,
   QUIET_MS,
   RETRY_LISTEN_MS,
@@ -255,15 +257,47 @@ describe("RealtimeHub — push source", () => {
     }
   });
 
-  it("resyncs listeners when a row fetch fails", async () => {
-    const { hub, deps, push } = setup();
+  it("retries a failed row fetch and delivers the change", async () => {
+    const { hub, deps, rows, push } = setup();
+    vi.spyOn(console, "error").mockImplementation(() => {});
     const sub = subscribe(hub, { table: "messages" });
     await flush();
     push().onLive();
+    rows.set("messages:m1", { id: "m1" });
     deps.fetchRows.mockRejectedValueOnce(new Error("network"));
     push().onSignals([signal({ seq: "1" })]);
     await flush();
+    expect(sub.events).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(FETCH_RETRY_MS);
+    expect(sub.events.map((e) => e.new.id)).toEqual(["m1"]);
+    expect(sub.statuses).toEqual(["SUBSCRIBED"]);
+  });
+
+  it("after the last retry, resyncs and lets polling deliver the change", async () => {
+    const { hub, deps, rows, log, push } = setup();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const sub = subscribe(hub, { table: "messages" });
+    await flush();
+    push().onLive();
+    rows.set("messages:m1", { id: "m1" });
+    vi.setSystemTime(T0 + 1000);
+    log.push(logChange(1));
+
+    deps.fetchRows.mockRejectedValue(new Error("network"));
+    push().onSignals([signal({ seq: "1" })]);
+    await vi.advanceTimersByTimeAsync(FETCH_RETRY_MS * (2 ** FETCH_RETRIES - 1));
+    expect(deps.fetchRows).toHaveBeenCalledTimes(1 + FETCH_RETRIES);
+    expect(sub.events).toEqual([]);
     expect(sub.statuses).toEqual(["SUBSCRIBED", "CHANNEL_ERROR", "SUBSCRIBED"]);
+
+    // The change id was released: the next check of the log delivers it.
+    deps.fetchRows.mockReset();
+    deps.fetchRows.mockImplementation(async (table, _column, ids) =>
+      ids.map((id) => rows.get(`${table}:${id}`)).filter((r): r is Record<string, unknown> => !!r),
+    );
+    await vi.advanceTimersByTimeAsync(QUIET_MS);
+    expect(sub.events.map((e) => e.new.id)).toEqual(["m1"]);
   });
 });
 

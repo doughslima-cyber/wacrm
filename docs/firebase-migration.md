@@ -577,6 +577,9 @@ do `realtime_relay`), `firestore.rules`, service account `relay-realtime`
 e o Cloud Run `relay-realtime`. O deploy pelo código criou o repositório
 `cloud-run-source-deploy` no Artifact Registry.
 
+**Pendente:** aplicar a `046_realtime_notification_read_at.sql`
+(`cd infra && npm run db:migrate`), que veio da revisão do PR.
+
 Roteiro com `npm run dev` contra o Cloud SQL, o Firebase e o relay no Cloud
 Run, com dois usuários novos (A e B) verificados pela Admin API. A entrou
 pela tela `/login` em `a.localhost:3000` (subdomínio de `localhost`: outra
@@ -617,7 +620,10 @@ Como ficou:
   mudanças repetidas pelo id, busca as linhas por tabela em lote
   (`?id=in.(…)`, 100 por vez) e entrega na ordem das mudanças. Uma linha
   que a RLS não devolve é descartada, como acontecia no Supabase com
-  notificações de outro membro. O hub para 10s depois que o último canal sai.
+  notificações de outro membro. Se a busca falha, o sinal volta para a
+  fila (1s, 2s, 4s); esgotadas as tentativas, o id fica livre para o
+  polling do log e os canais recebem `CHANNEL_ERROR` → `SUBSCRIBED`. O hub
+  para 10s depois que o último canal sai.
 - Status igual ao supabase-js: `SUBSCRIBED` quando há uma fonte ativa e
   `CHANNEL_ERROR` quando não há. Uma busca de linha que falha gera
   `CHANNEL_ERROR` → `SUBSCRIBED`, a transição que faz a inbox recarregar.
@@ -625,13 +631,15 @@ Como ficou:
   `eq`). Filtro em coluna-chave (`conversation_id`, `account_id`) é
   decidido antes da busca, então reações de outra conversa nem são
   buscadas. `DELETE` traz só as chaves em `old`, como a replica identity
-  padrão do Supabase.
+  padrão do Supabase. Para notificações, as chaves do `DELETE` incluem
+  `read_at` (`046_realtime_notification_read_at.sql`), que o
+  `useUnreadNotifications` usa para decidir se o contador cai.
 - O relay publica as mudanças e marca as linhas na mesma transação. Se cair
   entre as duas coisas, repete a escrita (mesmo id de documento), mas não
   pula nenhuma. Linhas com mais de 10 min quando o relay volta são marcadas
   sem sinal (as abas já as leram pelo polling), e as publicadas somem do
   log depois de 1h.
-- Testes: `changes.test.ts` e `hub.test.ts` (25), `coalesce.test.mjs`
+- Testes: `changes.test.ts` e `hub.test.ts` (26), `coalesce.test.mjs`
   (`cd infra && npm run relay:test`, 10) e `infra/firestore/rules.test.mjs`
   no emulador (`npm run firestore:test-rules`, 6/6). As regras de Storage
   continuam 18/18 com o `firebase.json` novo. No app, `npm run typecheck`
